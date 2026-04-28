@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-install.py
+install-dotnet-testing-agents.py
 
 一鍵安裝 dotnet-testing Agent Orchestration 所需的全部元件到指定的目標專案。
 
@@ -12,8 +12,8 @@ install.py
   5. .claude/settings.json — 執行 install-hooks.js 寫入 hooks 配置
 
 用法：
-  python scripts/install.py                    # 目標為目前工作目錄
-  python scripts/install.py /path/to/project   # 指定目標專案路徑
+  python scripts/install-dotnet-testing-agents.py                    # 目標為目前工作目錄
+  python scripts/install-dotnet-testing-agents.py /path/to/project   # 指定目標專案路徑
 """
 
 import io
