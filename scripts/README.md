@@ -6,13 +6,13 @@
 
 不需要手動執行多個安裝步驟——執行這支指令碼後，目標專案的 `.claude/` 目錄會自動完成以下所有設定：
 
-| 安裝項目 | 說明 | 數量 |
-| --- | --- | --- |
-| `.claude/agents/` | 4 種工作流程的 Subagent 定義檔 | 16 個 .md 檔 |
-| `.claude/hooks/` | 計時 Hook 腳本 | 3 個檔案 |
-| `.claude/skills/` | Orchestrator Skills（本 repo 內建） | 5 個目錄 |
-| `.claude/skills/` | Agent Skills（從 GitHub 下載） | 29+ 個目錄 |
-| `.claude/settings.json` | hooks 配置（由 install-hooks.js 寫入） | 1 個檔案 |
+| 安裝項目                | 說明                                   | 數量         |
+| ----------------------- | -------------------------------------- | ------------ |
+| `.claude/agents/`       | 4 種工作流程的 Subagent 定義檔         | 16 個 .md 檔 |
+| `.claude/hooks/`        | 計時 Hook 腳本                         | 3 個檔案     |
+| `.claude/skills/`       | Orchestrator Skills（本 repo 內建）    | 5 個目錄     |
+| `.claude/skills/`       | Agent Skills（從 GitHub 下載）         | 29+ 個目錄   |
+| `.claude/settings.json` | hooks 配置（由 install-hooks.js 寫入） | 1 個檔案     |
 
 安裝完成後，在 Claude Code 中即可使用以下斜線指令啟動測試工作流程：
 
@@ -29,12 +29,12 @@
 
 ### 必要條件
 
-| 條件 | 說明 | 驗證指令 |
-| --- | --- | --- |
-| **Python 3.8 以上** | 指令碼使用 `shutil.copytree(dirs_exist_ok=True)`，需要 Python 3.8+ | `python --version` |
-| **Node.js（任意版本）** | 安裝完成後會執行 `install-hooks.js`，需要 `node` 在 PATH 中 | `node --version` |
-| **網路連線** | Step 4 需要連線至 GitHub API 與 GitHub CDN 下載 Agent Skills | — |
-| **磁碟空間（約 200MB）** | Agent Skills 的 zipball 約 100MB，解壓後約 200MB（含 PDF 文件） | — |
+| 條件                     | 說明                                                               | 驗證指令           |
+| ------------------------ | ------------------------------------------------------------------ | ------------------ |
+| **Python 3.8 以上**      | 指令碼使用 `shutil.copytree(dirs_exist_ok=True)`，需要 Python 3.8+ | `python --version` |
+| **Node.js（任意版本）**  | 安裝完成後會執行 `install-hooks.js`，需要 `node` 在 PATH 中        | `node --version`   |
+| **網路連線**             | Step 4 需要連線至 GitHub API 與 GitHub CDN 下載 Agent Skills       | —                  |
+| **磁碟空間（約 200MB）** | Agent Skills 的 zipball 約 100MB，解壓後約 200MB（含 PDF 文件）    | —                  |
 
 ### 執行環境
 
@@ -139,12 +139,12 @@ python ~/repos/dotnet-testing-agent-orchestration-claude/scripts/install-dotnet-
 
 安裝完成後自動驗證：
 
-| 驗證項目 | 預期值 |
-| --- | --- |
-| `agents/*.md` 檔案數 | 16 個 |
-| `hooks/` 檔案數 | 3 個以上 |
-| `skills/` 目錄數（含 SKILL.md）| 34 個以上 |
-| `settings.json` 存在 | 是 |
+| 驗證項目                        | 預期值    |
+| ------------------------------- | --------- |
+| `agents/*.md` 檔案數            | 16 個     |
+| `hooks/` 檔案數                 | 3 個以上  |
+| `skills/` 目錄數（含 SKILL.md） | 34 個以上 |
+| `settings.json` 存在            | 是        |
 
 ---
 
