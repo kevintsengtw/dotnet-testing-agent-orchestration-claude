@@ -10,6 +10,7 @@
   - [架構概覽](#架構概覽)
   - [系統需求](#系統需求)
   - [安裝與環境設定](#安裝與環境設定)
+    - [一鍵安裝（推薦）](#一鍵安裝推薦)
     - [步驟 1：Clone 儲存庫](#步驟-1clone-儲存庫)
     - [步驟 2：安裝 Agent Skills](#步驟-2安裝-agent-skills)
     - [步驟 3：確認完整 .claude/ 目錄結構](#步驟-3確認完整-claude-目錄結構)
@@ -66,6 +67,22 @@ dotnet workload install aspire
 ---
 
 ## 安裝與環境設定
+
+### 一鍵安裝（推薦）
+
+Clone repo 後，執行以下指令即可完成全部安裝：
+
+```bash
+git clone https://github.com/kevintsengtw/dotnet-testing-agent-orchestration-claude.git
+cd dotnet-testing-agent-orchestration-claude
+python scripts/install-dotnet-testing-agents.py /path/to/your-project
+```
+
+指令碼會自動依序完成：複製 agents / hooks / skills（5 個）、從 GitHub 下載 Agent Skills（29+ 個）、執行 `install-hooks.js` 寫入 hooks 配置，並在結束後驗證安裝結果。
+
+**執行環境需求：** Python 3.8+、Node.js、網路連線。詳細說明請參閱 [scripts/README.md](scripts/README.md)。
+
+---
 
 ### 步驟 1：Clone 儲存庫
 
@@ -281,6 +298,7 @@ Hook 會自動記錄每個 Subagent 的執行耗時，執行後設定寫入 `.cl
 
 > 完整文件請參閱 [docs/README.md](docs/README.md)
 
+- 一鍵安裝指令碼：[scripts/README.md](scripts/README.md)
 - 安裝說明：[docs/SETUP.md](docs/SETUP.md)
 - 架構總覽：[docs/architecture/overview.md](docs/architecture/overview.md)
 - 使用指南：[docs/guides/](docs/guides/)
