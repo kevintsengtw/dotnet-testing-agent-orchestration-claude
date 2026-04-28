@@ -70,13 +70,25 @@ dotnet workload install aspire
 
 ### 一鍵安裝（推薦）
 
-Clone repo 後，執行以下指令即可完成全部安裝：
+Clone 本 repo 後，從 repo 根目錄執行安裝指令碼，有兩種呼叫方式：
+
+#### 方式 A：指定目標專案的工作區路徑（在本 repo 內執行）
 
 ```bash
 git clone https://github.com/kevintsengtw/dotnet-testing-agent-orchestration-claude.git
 cd dotnet-testing-agent-orchestration-claude
 python scripts/install-dotnet-testing-agents.py /path/to/your-project
 ```
+
+#### 方式 B：切換到目標專案目錄後執行（目標預設為當前工作目錄）
+
+```bash
+git clone https://github.com/kevintsengtw/dotnet-testing-agent-orchestration-claude.git
+cd /path/to/your-project
+python /path/to/dotnet-testing-agent-orchestration-claude/scripts/install-dotnet-testing-agents.py
+```
+
+> **注意：** 指令碼必須從本 repo 的 `scripts/` 目錄執行，或透過完整路徑呼叫。勿將 `install-dotnet-testing-agents.py` 單獨複製到目標專案執行，指令碼需要讀取本 repo 的 `.claude/` 來源目錄。
 
 指令碼會自動依序完成：複製 agents / hooks / skills（5 個）、從 GitHub 下載 Agent Skills（29+ 個）、執行 `install-hooks.js` 寫入 hooks 配置，並在結束後驗證安裝結果。
 
