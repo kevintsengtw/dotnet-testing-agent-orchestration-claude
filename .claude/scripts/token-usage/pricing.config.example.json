@@ -1,0 +1,24 @@
+{
+  "_comment": "成本估算為選用。複製本檔到 token-usage-reports/pricing.config.json 並填入單價即可啟用。單價單位為『每百萬 token (per MTok) 美元』。請以官方價目為準自行填入，本專案不寫死任何單價：https://docs.claude.com/en/docs/about-claude/pricing",
+  "_note": "rates 的 key 必須與 transcript 內的 message.model 完全一致（例如 claude-opus-4-8、claude-sonnet-4-6、claude-haiku-4-5-20251001）。未列出的模型不計成本；全部為 0 視為未設定，報告會略過成本估算。",
+  "rates": {
+    "claude-opus-4-8": {
+      "input_per_mtok": 0,
+      "output_per_mtok": 0,
+      "cache_write_per_mtok": 0,
+      "cache_read_per_mtok": 0
+    },
+    "claude-sonnet-4-6": {
+      "input_per_mtok": 0,
+      "output_per_mtok": 0,
+      "cache_write_per_mtok": 0,
+      "cache_read_per_mtok": 0
+    },
+    "claude-haiku-4-5-20251001": {
+      "input_per_mtok": 0,
+      "output_per_mtok": 0,
+      "cache_write_per_mtok": 0,
+      "cache_read_per_mtok": 0
+    }
+  }
+}

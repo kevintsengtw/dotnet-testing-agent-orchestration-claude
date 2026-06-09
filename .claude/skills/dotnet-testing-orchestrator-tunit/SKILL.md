@@ -36,12 +36,14 @@ description: >
 
 **不要讀原始碼。不要分析專案。不要寫任何程式碼。**
 
-你收到任務後的前 2 個動作必須是：
+你收到任務後必須依序執行（中間不得插入任何原始碼探索）：
 
 1. `Glob({testProjectDir}/.orchestrator/**)` — 檢查殘留（Phase 0）
-2. `Agent(subagent_type="dotnet-testing-advanced-tunit-analyzer", ...)` — **立即啟動 Analyzer**
+2. （僅在有殘留時）委託 Executor 清理
+3. 一次 best-effort 的 `token_usage.js start tunit` 計量起點標記（不讀原始碼，見 Phase 0.5）
+4. `Agent(subagent_type="dotnet-testing-advanced-tunit-analyzer", ...)` — **立即啟動 Analyzer**
 
-**在啟動 Analyzer 之前，你不得執行任何其他動作。** 這是非協商性的硬性要求。
+**除上述步驟外，在啟動 Analyzer 之前不得執行任何其他動作（尤其禁止讀原始碼／Grep 探索）。** 這是非協商性的硬性要求。
 
 ---
 
@@ -64,10 +66,11 @@ description: >
 
 ### ⚡ 快速啟動原則（MUST READ）
 
-**Orchestrator 在啟動 Analyzer 之前的工具呼叫不得超過 2 次。** 你只需要：
+**Orchestrator 在啟動 Analyzer 之前，除了 Glob 殘留檢查、（必要時）cleanup、與一次 best-effort 的 `start` 計量呼叫外，不得有其他工具呼叫。** 你只需要：
 
 1. `Glob` 檢查 `.orchestrator/` 殘留（Phase 0）
-2. **立即計算 `analysisOutputPath` 並啟動 Analyzer**
+2. （清理後）執行 `token_usage.js start tunit` 標記計量起點（best-effort，見 Phase 0.5）
+3. **立即計算 `analysisOutputPath` 並啟動 Analyzer**
 
 **深度分析是 Analyzer 的職責，不是你的。** 以下行為在啟動 Analyzer 之前**嚴格禁止**：
 
@@ -126,7 +129,17 @@ Agent(subagent_type="dotnet-testing-advanced-tunit-reviewer", prompt="...")
 
 1. 使用 Glob 檢查 `{testProjectDir}/.orchestrator/**/*` 是否有檔案
 2. **若有殘留**：委託 Executor subagent 以 `task: "cleanup"` 清理（傳入測試專案路徑）
-3. **若無殘留**：直接進入階段 1
+3. **若無殘留**：直接進入 Phase 0.5
+
+### Phase 0.5：標記 Token 計量起點
+
+Phase 0 清理完成後、**啟動 Analyzer 之前**，以 **Bash 工具**執行一次（best-effort：失敗或無輸出即略過，不影響流程）：
+
+```bash
+node .claude/scripts/token-usage/token_usage.js start tunit 2>/dev/null
+```
+
+這標記本次工作流程的 token 計量起點，使 **Phase 0 清理用的 Executor 不被計入** token 統計，主執行緒也只計階段 1 之後。此呼叫**不是探索**（不讀原始碼、不 Grep）。
 
 ### 階段 1：啟動分析（TUnit Analyzer）
 
@@ -287,7 +300,8 @@ executorResultFilePath: {executorResultFilePath}
 | Executor 回傳後 | `✅ 階段 3 完成（{hook 注入的耗時}）— N 個測試案例通過，修正 Y 次` |
 | 啟動 Reviewer **前** | `## 階段 4：啟動審查（Test Reviewer）` |
 | Reviewer 回傳後 | `✅ 階段 4 完成（{hook 注入的耗時}）` |
-| **結果呈現後**（最後一步）| 輸出 `### ⏱ 各階段耗時` 表格（見下方格式） |
+| **結果呈現後** | 輸出 `### ⏱ 各階段耗時` 表格（見下方格式） |
+| **耗時表之後**（真正最後一步）| 執行 `report` 指令並**把其 stdout 表格貼進回覆**（⛔ 只跑不貼 = 未完成；見「📊 Token 用量」段） |
 
 ---
 
@@ -320,6 +334,26 @@ executorResultFilePath: {executorResultFilePath}
 ```
 
 > 各階段耗時從 PostToolUse hook 注入的 `additionalContext` 中取得（格式：`耗時 M 分 S 秒`）。若多個 Writer 並行，階段 2 耗時取最長的一個。總計為四個階段之和。
+
+### 📊 本次工作流程 Token 用量（強制最終輸出，不可省略）
+
+⛔ **這是整個工作流程的最後一個必要產出。只跑指令、沒把表格貼進可見回覆 = 未完成。**
+Bash 的 stdout **不會自動顯示給使用者**，必須由你親手複製貼出。嚴格依序：
+
+1. 以 **Bash 工具**執行（此步只取得資料，使用者還看不到）：
+
+   ```bash
+   node .claude/scripts/token-usage/token_usage.js report tunit 2>/dev/null
+   ```
+
+2. **立即在你的回覆中，把該指令 stdout 的整段 Markdown 表格（從 `### 📊 本次測試工作流程 Token 用量` 到 `>` 開頭的備註）一字不改、完整貼出**，作為給使用者看的最終結果。
+3. ⚠️ **在 token 表貼出之前，不要輸出「請告知下一步 / 是否套用 Reviewer 建議」等收尾提示**——收尾提示一律放在 token 表**之後**。
+4. 只有當指令真的無輸出或失敗（本機未產生 transcript）時，才可略過本段。
+
+> 自我檢查（結束前必問）：**「我是否已把 report 指令的 stdout 表格貼進可見回覆？」** 若否 → 立即補貼，不得結束。
+
+- 統計涵蓋 Orchestrator 主執行緒 ＋ 本次所有 `dotnet-testing-*` subagent；input 分純 input／cache 寫入／cache 讀取，另有含快取合計與 output。
+- 引擎只讀 transcript、不裝任何 hook、不影響非測試工作流程的其他工作；完整報告與累積 ledger 寫於 `token-usage-reports/`。詳見 `docs/TOKEN_USAGE_GUIDE.md`。
 
 ---
 
@@ -358,6 +392,14 @@ executorResultFilePath: {executorResultFilePath}
 1. 修改前後的測試數量變化（例：12 → 16）
 2. 套用了哪些 Reviewer 建議
 3. 重新評分結果（例：B+ → A）
+
+修改流程結果呈現後，**同樣執行 token 用量統計並親手貼出表格**（規則同主路徑「強制最終輸出」）：先以 Bash 工具執行下列指令，再把其 stdout 的整段 Markdown 表格**一字不改貼進可見回覆**作為最後一段（⛔ 只跑不貼 = 未完成）；收尾提示放在表格之後。
+
+```bash
+node .claude/scripts/token-usage/token_usage.js report tunit 2>/dev/null
+```
+
+> 因計量起點 marker 不變，這次輸出的是**含本次修改的累計用量**（與初始 run 同一筆 ledger，數字累加）。
 
 ---
 
