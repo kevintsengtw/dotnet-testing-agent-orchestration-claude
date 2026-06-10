@@ -314,7 +314,12 @@ function aggregate(transcriptPath, start, end) {
 // 路徑與環境
 // ---------------------------------------------------------------------------
 
+let _projectDirOverride = null; // 測試用：強制 projectDir 回傳值
+function setProjectDirOverride(p) {
+  _projectDirOverride = p;
+}
 function projectDir() {
+  if (_projectDirOverride !== null) return _projectDirOverride;
   const env = process.env.CLAUDE_PROJECT_DIR;
   if (env) return env;
   let p = __dirname;
@@ -645,7 +650,12 @@ function writeReportFiles(meta, result) {
 // 當前 session 自我定位
 // ---------------------------------------------------------------------------
 
+let _projectsRootOverride = null; // 測試用：強制 ~/.claude/projects 根目錄
+function setProjectsRootOverride(p) {
+  _projectsRootOverride = p;
+}
 function projectsRoot() {
+  if (_projectsRootOverride !== null) return _projectsRootOverride;
   return path.join(os.homedir(), ".claude", "projects");
 }
 
@@ -670,8 +680,50 @@ function encodedSessionDir() {
   return d; // 可能不存在，呼叫端自行判斷
 }
 
-// 回傳 [sessionId, transcriptPath]；取最近被寫入的 <id>.jsonl。失敗回 [null, null]。
-function currentSession() {
+// runtime 注入的權威 session id（Claude Code 2.1.x / VS Code 擴充皆設此變數）。
+function envSessionId() {
+  const v = process.env.CLAUDE_CODE_SESSION_ID || process.env.CLAUDE_SESSION_ID || "";
+  const s = String(v).trim();
+  return s || null;
+}
+
+// 以權威 sid 定位 transcript，回傳 {path, via} 或 null。
+// via="env-fast"：在引擎推算的編碼資料夾命中；via="env-glob"：跨所有專案資料夾找到。
+// 後者免於 encodeProjectPath 與 Claude Code 實際資料夾命名不一致（例：_→-、大小寫、其他正規化）。
+function locateBySid(sid) {
+  if (!sid) return null;
+  let fast = null;
+  try {
+    fast = path.join(encodedSessionDir(), sid + ".jsonl");
+    if (fs.existsSync(fast)) return { path: fast, via: "env-fast" };
+  } catch (e) {
+    /* skip */
+  }
+  const root = projectsRoot();
+  let children;
+  try {
+    children = fs.readdirSync(root);
+  } catch (e) {
+    return null;
+  }
+  for (const child of children) {
+    const cand = path.join(root, child, sid + ".jsonl");
+    try {
+      if (fs.statSync(cand).isFile()) return { path: cand, via: "env-glob" };
+    } catch (e) {
+      /* skip */
+    }
+  }
+  return null;
+}
+
+function findTranscriptBySid(sid) {
+  const r = locateBySid(sid);
+  return r ? r.path : null;
+}
+
+// 後備（無權威 sid，或其 transcript 尚未落地）：取編碼資料夾中最近寫入的 <id>.jsonl。
+function currentSessionByMtime() {
   const d = encodedSessionDir();
   if (!fs.existsSync(d)) return [null, null];
   let names;
@@ -698,6 +750,59 @@ function currentSession() {
   }
   if (!newest) return [null, null];
   return [path.basename(newest, ".jsonl"), newest];
+}
+
+// 回傳 [sessionId, transcriptPath]。優先以 runtime 權威 sid 定位（免於路徑編碼差異），
+// 失敗才回退最近 mtime 掃描（舊行為）。失敗回 [null, null]。
+function currentSession() {
+  const sid = envSessionId();
+  if (sid) {
+    const tp = findTranscriptBySid(sid);
+    if (tp) return [sid, tp];
+  }
+  return currentSessionByMtime();
+}
+
+// 自我定位診斷（locate 子指令 / --verbose / 略過訊息使用）。
+function locateInfo() {
+  const sid = envSessionId();
+  const pdir = projectDir();
+  let encDir = "";
+  try {
+    encDir = encodedSessionDir();
+  } catch (e) {
+    encDir = "(error: " + ((e && e.message) || e) + ")";
+  }
+  let encExists = false;
+  let jsonlCount = 0;
+  let hasIndex = false;
+  try {
+    encExists = fs.existsSync(encDir);
+    if (encExists) {
+      const names = fs.readdirSync(encDir);
+      jsonlCount = names.filter((n) => n.endsWith(".jsonl")).length;
+      hasIndex = names.indexOf("sessions-index.json") !== -1;
+    }
+  } catch (e) {
+    /* skip */
+  }
+  const bySid = sid ? locateBySid(sid) : null;
+  const [rsid, rtp] = currentSession();
+  let resolvedVia = "none";
+  if (rsid) resolvedVia = bySid ? bySid.via : "mtime";
+  return {
+    envSessionId: sid,
+    projectsRoot: projectsRoot(),
+    projectDir: pdir,
+    encodedSessionDir: encDir,
+    encodedDirExists: encExists,
+    jsonlCount: jsonlCount,
+    hasSessionsIndex: hasIndex,
+    findBySid: bySid ? bySid.path : null,
+    resolvedSessionId: rsid,
+    resolvedTranscript: rtp,
+    resolvedVia: resolvedVia,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -745,10 +850,37 @@ function cmdStart(framework) {
   return 0;
 }
 
-function cmdReport(framework) {
-  const [sid, tp] = currentSession();
+// 略過時印出可診斷訊息（指出卡在哪一步，免逆向原始碼）。
+function skipMessage() {
+  const info = locateInfo();
+  const reason = info.envSessionId
+    ? `偵測到 session id（${info.envSessionId}）但跨資料夾仍找不到對應 transcript`
+    : "未取得 CLAUDE_CODE_SESSION_ID，且推算資料夾無可讀 transcript";
+  return (
+    "（找不到當前 session transcript，略過 token 統計）\n" +
+    `（診斷：${reason}；projectDir=${info.projectDir}；encodedDir存在=${info.encodedDirExists}；` +
+    `jsonl數=${info.jsonlCount}；sessions-index=${info.hasSessionsIndex}。` +
+    "完整診斷：node .claude/scripts/token-usage/token_usage.js locate）\n"
+  );
+}
+
+function cmdReport(framework, opts) {
+  opts = opts || {};
+  let [sid, tp] = currentSession();
+  // 後備還原：即時定位失敗時，沿用 start 階段 marker 內記錄的 transcript_path。
   if (!sid) {
-    process.stdout.write("（找不到當前 session transcript，略過 token 統計）\n");
+    const envSid = envSessionId();
+    const m = envSid ? readMarker(envSid) : null;
+    if (m && m.transcript_path && fs.existsSync(m.transcript_path)) {
+      sid = m.session_id || envSid;
+      tp = m.transcript_path;
+    }
+  }
+  if (opts.verbose) {
+    process.stderr.write("token_usage locate: " + JSON.stringify(locateInfo()) + "\n");
+  }
+  if (!sid) {
+    process.stdout.write(skipMessage());
     return 0;
   }
   const marker = readMarker(sid);
@@ -882,6 +1014,50 @@ function cmdSelftest() {
     setReportsDirOverride(null);
   }
 
+  // 自我定位：權威 sid 跨資料夾 glob（重現 _ vs - 編碼不一致情境）
+  const locRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tu_loc_"));
+  const locSid = "5bb01fad-ca82-41bb-ab2e-d7e4596cafb8";
+  const realDir = path.join(locRoot, "c--Temp-Extension-Sample");
+  fs.mkdirSync(realDir, { recursive: true });
+  const realTp = path.join(realDir, locSid + ".jsonl");
+  fs.writeFileSync(realTp, "{}\n");
+  const wrongDir = path.join(locRoot, "c--Temp-Extension_Sample");
+  fs.mkdirSync(wrongDir, { recursive: true });
+  fs.writeFileSync(path.join(wrongDir, "sessions-index.json"), "{}");
+  const savedSid = process.env.CLAUDE_CODE_SESSION_ID;
+  setProjectsRootOverride(locRoot);
+  setProjectDirOverride("c:\\Temp\\Extension_Sample");
+  try {
+    chk("encodeProjectPath 推算資料夾與實際不一致(底線vs連字號)", path.basename(encodedSessionDir()) === "c--Temp-Extension_Sample");
+    process.env.CLAUDE_CODE_SESSION_ID = locSid;
+    const [rsid, rtp] = currentSession();
+    chk("權威 sid → 跨資料夾 glob 命中正確 transcript", rsid === locSid && rtp === realTp);
+    chk("locateInfo resolvedVia=env-glob", locateInfo().resolvedVia === "env-glob");
+    delete process.env.CLAUDE_CODE_SESSION_ID;
+    chk("無權威 sid 且推算資料夾無 jsonl → currentSession=null（重現舊版略過）", currentSession()[0] === null);
+
+    // 跨平台：POSIX（macOS / Linux）路徑同樣以權威 sid + glob 解析
+    const posixDir = path.join(locRoot, "-Users-kevin-Extension-Sample");
+    fs.mkdirSync(posixDir, { recursive: true });
+    const posixSid = "abcde123-4567-89ab-cdef-0123456789ab";
+    fs.writeFileSync(path.join(posixDir, posixSid + ".jsonl"), "{}\n");
+    setProjectDirOverride("/Users/kevin/Extension_Sample");
+    process.env.CLAUDE_CODE_SESSION_ID = posixSid;
+    chk("跨平台 POSIX：權威 sid → glob 命中", currentSession()[1] === path.join(posixDir, posixSid + ".jsonl"));
+  } catch (e) {
+    chk("自我定位測試例外：" + e, false);
+  } finally {
+    if (savedSid === undefined) delete process.env.CLAUDE_CODE_SESSION_ID;
+    else process.env.CLAUDE_CODE_SESSION_ID = savedSid;
+    setProjectDirOverride(null);
+    setProjectsRootOverride(null);
+    try {
+      fs.rmSync(locRoot, { recursive: true, force: true });
+    } catch (e) {
+      /* skip */
+    }
+  }
+
   try {
     fs.rmSync(tmp, { recursive: true, force: true });
   } catch (e) {
@@ -902,15 +1078,21 @@ function cmdSelftest() {
 
 function main(argv) {
   if (!argv.length) {
-    process.stderr.write("用法: token_usage.js {start|report|selftest} [framework]\n");
+    process.stderr.write("用法: token_usage.js {start|report|selftest|locate} [framework] [--verbose]\n");
     return 0;
   }
-  const cmd = argv[0];
-  const framework = argv.length > 1 ? argv[1] : "";
+  const verbose = argv.indexOf("--verbose") !== -1 || !!process.env.TOKEN_USAGE_DEBUG;
+  const rest = argv.filter((a) => a !== "--verbose");
+  const cmd = rest[0];
+  const framework = rest.length > 1 ? rest[1] : "";
   try {
     if (cmd === "start") return cmdStart(framework);
-    if (cmd === "report") return cmdReport(framework);
+    if (cmd === "report") return cmdReport(framework, { verbose: verbose });
     if (cmd === "selftest") return cmdSelftest();
+    if (cmd === "locate" || cmd === "diagnose") {
+      process.stdout.write(JSON.stringify(locateInfo(), null, 2) + "\n");
+      return 0;
+    }
     process.stderr.write("未知子指令: " + cmd + "\n");
     return 0;
   } catch (e) {
@@ -944,6 +1126,8 @@ module.exports = {
   latestClusterStart,
   aggregate,
   projectDir,
+  setProjectDirOverride,
+  setProjectsRootOverride,
   reportsDir,
   stateDir,
   nowUtc,
@@ -959,7 +1143,12 @@ module.exports = {
   writeReportFiles,
   projectsRoot,
   encodedSessionDir,
+  envSessionId,
+  locateBySid,
+  findTranscriptBySid,
+  currentSessionByMtime,
   currentSession,
+  locateInfo,
   markerPath,
   writeMarker,
   readMarker,

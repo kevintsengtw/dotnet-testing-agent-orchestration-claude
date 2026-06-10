@@ -45,7 +45,9 @@
    node .claude/scripts/token-usage/token_usage.js report <framework> 2>/dev/null
    ```
 
-引擎**自我定位**當前 session（取 `~/.claude/projects/<encoded>/` 中最近寫入的 `<id>.jsonl`），
+引擎**自我定位**當前 session：**優先用 runtime 注入的權威 `CLAUDE_CODE_SESSION_ID`**，以該 sid 跨
+`~/.claude/projects/*/` 直接找到對應的 `<sid>.jsonl`（**免於路徑編碼與資料夾命名差異**，見下方「自我定位」）；
+僅在取不到該變數或其檔尚未落地時，才回退「編碼資料夾中最近寫入的 `<id>.jsonl`」。
 把精簡表格印到 stdout（Orchestrator 附在結果最後），並把完整報告與 ledger 寫到 `token-usage-reports/`。
 
 不需安裝、不需接線、不需重啟 session——隨工作流程自動產生。
@@ -124,9 +126,26 @@ npx ccusage@latest session
 | 直譯器 | `node`（同名） | `node`（同名） |
 | 呼叫 | 單一 `node …js` 指令，免 fallback | 同左 |
 | Bash 工具 | Git Bash (MINGW)，Windows 路徑可用 | 原生 sh/bash |
-| 路徑編碼 | `c:\...` → `c--...`（大小寫不敏感） | `/Users/...` → `-Users-...` |
+| 路徑編碼 | `c:\...` → `c--...` | `/Users/...` → `-Users-...` |
+| session 定位 | `CLAUDE_CODE_SESSION_ID` + 跨資料夾 glob | 同左 |
 
 > 引擎以 cwd / 腳本位置自我定位專案根，不依賴 `CLAUDE_PROJECT_DIR`（該變數在 Bash 環境可能為空）。
+
+### 自我定位（為何不靠路徑編碼）
+
+Claude Code 的 `~/.claude/projects/<資料夾>/` 命名，其正規化規則比「`: \ /` → `-`」更廣
+（實測 `_` 也會被換成 `-`、亦含大小寫差異），引擎無法保證逐字重現該資料夾名。
+因此引擎改以 runtime 注入的權威 **`CLAUDE_CODE_SESSION_ID`** 為主：sid 全域唯一，
+直接跨 `~/.claude/projects/*/` 尋找 `<sid>.jsonl`，**與資料夾如何編碼無關**，Windows 與
+macOS / Linux 行為一致。診斷時可執行：
+
+```bash
+node .claude/scripts/token-usage/token_usage.js locate
+```
+
+輸出 `resolvedVia`：`env-fast`（推算資料夾即命中）／`env-glob`（跨資料夾命中）／
+`mtime`（無權威 sid，回退最近寫入）／`none`（定位失敗，附 projectDir / jsonl 數等診斷）。
+`report` 失敗略過時也會印出同類診斷資訊，並可加 `--verbose` 觀察定位過程。
 
 ## 設計鐵則
 

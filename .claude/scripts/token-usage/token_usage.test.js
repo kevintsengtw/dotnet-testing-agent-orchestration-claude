@@ -245,6 +245,99 @@ section("Phase 3: render / ledger / writeReportFiles");
 }
 
 // ---------------------------------------------------------------------------
+// Phase 7：自我定位（CLAUDE_CODE_SESSION_ID 權威 / 跨資料夾 glob / mtime 後備）
+// 重現實測根因：cwd=c:\Temp\Extension_Sample（底線），Claude Code 實際資料夾
+// 為 c--Temp-Extension-Sample（連字號）→ encodeProjectPath 推算錯誤資料夾 → 舊版找不到。
+// ---------------------------------------------------------------------------
+
+section("Phase 7: 自我定位 (env sid / glob / mtime)");
+{
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tu_root_"));
+  const sid = "5bb01fad-ca82-41bb-ab2e-d7e4596cafb8";
+  // Claude Code 實際儲存的資料夾（連字號），含目標 transcript
+  const realDir = path.join(root, "c--Temp-Extension-Sample");
+  fs.mkdirSync(realDir, { recursive: true });
+  const realTp = path.join(realDir, sid + ".jsonl");
+  fs.writeFileSync(realTp, "{}\n");
+  // 引擎由 projectDir 推算出的（錯誤）編碼資料夾：底線版，存在但無此 sid 檔
+  const wrongDir = path.join(root, "c--Temp-Extension_Sample");
+  fs.mkdirSync(wrongDir, { recursive: true });
+  fs.writeFileSync(path.join(wrongDir, "sessions-index.json"), "{}");
+
+  const savedSid = process.env.CLAUDE_CODE_SESSION_ID;
+  T.setProjectsRootOverride(root);
+  T.setProjectDirOverride("c:\\Temp\\Extension_Sample");
+  try {
+    chk("encodedSessionDir 指向錯誤(底線)資料夾", path.basename(T.encodedSessionDir()) === "c--Temp-Extension_Sample");
+
+    // (a) 有權威 sid：快路徑(底線資料夾)無檔 → 跨資料夾 glob 命中正確 transcript
+    process.env.CLAUDE_CODE_SESSION_ID = sid;
+    const [rsid, rtp] = T.currentSession();
+    chk("env sid → 跨資料夾 glob 命中正確 transcript", rsid === sid && rtp === realTp);
+    chk("locateInfo resolvedVia=env-glob", T.locateInfo().resolvedVia === "env-glob");
+    chk("findTranscriptBySid 直接命中", T.findTranscriptBySid(sid) === realTp);
+
+    // (b) sid 檔也存在於推算資料夾 → 快路徑(env-fast)優先
+    const fastTp = path.join(wrongDir, sid + ".jsonl");
+    fs.writeFileSync(fastTp, "{}\n");
+    chk("env sid 快路徑(env-fast)優先於 glob", T.currentSession()[1] === fastTp && T.locateInfo().resolvedVia === "env-fast");
+    fs.rmSync(fastTp);
+
+    // (c) 無權威 sid → 回退 mtime；推算資料夾僅 sessions-index、無 jsonl → null
+    delete process.env.CLAUDE_CODE_SESSION_ID;
+    chk("無 env sid 且推算資料夾無 jsonl → currentSession=null", T.currentSession()[0] === null);
+    chk("無 env sid 時 locateInfo resolvedVia=none", T.locateInfo().resolvedVia === "none");
+
+    // (d) 未知 sid → 找不到
+    chk("findTranscriptBySid 未知 sid → null", T.findTranscriptBySid("ffffffff-0000-0000-0000-000000000000") === null);
+
+    // (e) env sid 存在但全域查無對應檔 → 回退 mtime（此處仍 null）
+    process.env.CLAUDE_CODE_SESSION_ID = "ffffffff-0000-0000-0000-000000000000";
+    chk("env sid 查無檔 → 回退 mtime（無 jsonl→null）", T.currentSession()[0] === null);
+  } finally {
+    if (savedSid === undefined) delete process.env.CLAUDE_CODE_SESSION_ID;
+    else process.env.CLAUDE_CODE_SESSION_ID = savedSid;
+    T.setProjectDirOverride(null);
+    T.setProjectsRootOverride(null);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 7b：跨平台（macOS / Linux POSIX 路徑同樣以權威 sid + glob 解析）
+// 同一類編碼不一致：/Users/kevin/Extension_Sample（底線）vs CC 實際資料夾
+// -Users-kevin-Extension-Sample（連字號）。純字串 + fs 邏輯，於任一 OS 皆成立。
+// ---------------------------------------------------------------------------
+
+section("Phase 7b: 跨平台 (POSIX 路徑 glob)");
+{
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tu_posix_"));
+  const sid = "abcde123-4567-89ab-cdef-0123456789ab";
+  const realDir = path.join(root, "-Users-kevin-Extension-Sample"); // CC 實際（連字號）
+  fs.mkdirSync(realDir, { recursive: true });
+  const realTp = path.join(realDir, sid + ".jsonl");
+  fs.writeFileSync(realTp, "{}\n");
+
+  const savedSid = process.env.CLAUDE_CODE_SESSION_ID;
+  T.setProjectsRootOverride(root);
+  T.setProjectDirOverride("/Users/kevin/Extension_Sample"); // 底線
+  try {
+    chk("POSIX encodeProjectPath 推算(底線)", T.encodeProjectPath("/Users/kevin/Extension_Sample") === "-Users-kevin-Extension_Sample");
+    chk("POSIX 推算資料夾不存在", !fs.existsSync(T.encodedSessionDir()));
+    process.env.CLAUDE_CODE_SESSION_ID = sid;
+    const [rsid, rtp] = T.currentSession();
+    chk("POSIX：權威 sid → glob 命中正確 transcript", rsid === sid && rtp === realTp);
+    chk("POSIX：resolvedVia=env-glob", T.locateInfo().resolvedVia === "env-glob");
+  } finally {
+    if (savedSid === undefined) delete process.env.CLAUDE_CODE_SESSION_ID;
+    else process.env.CLAUDE_CODE_SESSION_ID = savedSid;
+    T.setProjectDirOverride(null);
+    T.setProjectsRootOverride(null);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 結果
 // ---------------------------------------------------------------------------
 process.stdout.write("\n");
