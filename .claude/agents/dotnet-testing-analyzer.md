@@ -85,11 +85,13 @@ permissionMode: bypassPermissions
 2. **讀取靜態類別原始碼**：找到靜態類別定義，**列出寫死的資料**（如 `_users` dictionary 的所有 key/value）
 3. **標記不可 Mock 的依賴**：靜態方法依賴標記為 `staticDependency: true`，不能被 NSubstitute Mock
 4. **識別直接 I/O 操作**：標記直接使用 `File.*`、`Directory.*`、`DateTime.Now` 的位置
-5. **輸出 `legacyInfo`**：
+5. **偵測 production 重構機會（跨平台旗標）**：當被測類別**直接使用 `File.*`/`Directory.*`（非透過 `IFileSystem`）** 且**含硬編絕對路徑**（如 `C:\...` Windows 路徑）時，產生 `productionRefactorSuggestion` 旗標。此情境無法用 `MockFileSystem` 攔截、且在非 Windows 平台必定失敗，測試只能用真實 File.IO + 凌亂 workaround。**Analyzer 只偵測與標記，不修改 production、不中斷流程。**
+6. **輸出 `legacyInfo`**：
    - `staticDependencies[]`：靜態方法呼叫清單，每個包含 `{ className, methodName, filePath }`
    - `hardcodedData`：靜態類別中寫死的資料摘要（如使用者清單、交易資料等）
    - `directIoOperations[]`：直接 I/O 操作清單（File.WriteAllText、DateTime.Now 等）
    - `testabilityIssues[]`：可測試性問題清單（無法 Mock、無法控制時間、無法驗證檔案寫入等）
+   - `productionRefactorSuggestion`（**僅在偵測到上述情境時輸出**）：`{ issue, location, hardcodedPath, recommendation }` —— 例如 `{ "issue": "硬編 Windows 路徑 + 直接 File.IO，無法跨平台測試", "location": "GenerateReport 第 41 行", "hardcodedPath": "C:\\Reports\\", "recommendation": "建構式注入 IFileSystem 取代直接 File.*，測試即可改用 MockFileSystem" }`。此旗標供 Reviewer 顯著呈現為 opt-in 建議（需使用者同意才修改 production）。
 
 > **Legacy Code 測試策略**：因為靜態依賴不可 Mock，測試**只能測試實際資料路徑**（Characterization Test）。`suggestedTestScenarios` 的命名必須反映靜態資料的實際內容，而非理想化的邊界條件。
 
@@ -427,7 +429,7 @@ permissionMode: bypassPermissions
 >
 > **用途**：Writer 以此為基礎建立 `CreateValid{ModelType}()` helper，確保多個 Writer 並行時各自的 base object 均能通過所有驗證規則。
 
-> **`legacyInfo` 結構**（當 `targetType === "legacy"` 時）：包含 `staticDependencies[]`（每項 `{ className, methodName, filePath }`）、`hardcodedData`（靜態類別中寫死的資料摘要，如 `"3 users: ID 1 Alice $350.50, ID 2 Bob $75, ID 3 Carol $0"`）、`directIoOperations[]`（如 `"File.WriteAllText"`, `"DateTime.Now"` 等）、`testabilityIssues[]`（可測試性問題描述清單）。**此資訊讓 Writer 知道只能用 Characterization Test 模式，命名必須基於靜態資料的實際值。**
+> **`legacyInfo` 結構**（當 `targetType === "legacy"` 時）：包含 `staticDependencies[]`（每項 `{ className, methodName, filePath }`）、`hardcodedData`（靜態類別中寫死的資料摘要，如 `"3 users: ID 1 Alice $350.50, ID 2 Bob $75, ID 3 Carol $0"`）、`directIoOperations[]`（如 `"File.WriteAllText"`, `"DateTime.Now"` 等）、`testabilityIssues[]`（可測試性問題描述清單）、`productionRefactorSuggestion`（僅在偵測到「直接 File.IO + 硬編絕對路徑 + 無 IFileSystem」時輸出，結構 `{ issue, location, hardcodedPath, recommendation }`）。**此資訊讓 Writer 知道只能用 Characterization Test 模式，命名必須基於靜態資料的實際值；`productionRefactorSuggestion` 供 Reviewer 顯著呈現為 opt-in 建議。**
 
 > **`fileSystemOperations` 結構**（當有 `IFileSystem` 依賴時）：`{ fileOps: [...], directoryOps: [...], pathOps: [...] }`。列出被測試類別使用的所有 `IFileSystem.File.*`、`IFileSystem.Directory.*`、`IFileSystem.Path.*` 操作名稱。
 

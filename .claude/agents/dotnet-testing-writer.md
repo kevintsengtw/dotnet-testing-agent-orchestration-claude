@@ -146,6 +146,96 @@ Read({analysisFilePath})
 
 **在撰寫任何測試方法之前，先建立測試類別的共用基礎設施：**
 
+> 🔑 **測試類別標準範本（唯一骨架 — 所有 Writer 必須照抄）**
+>
+> 以下骨架是測試類別的**唯一標準範本**。無論單一 Writer 或多 Writer 分割，一律照抄此骨架的**結構、區塊順序、註解格式、region 風格與 AAA 標示**，只替換你負責的方法與測試內容。
+> **理由**：constructor 區塊順序、XML class 註解格式、region 風格、AAA 標示、helper 策略等面向，只要未明確固定，平行 Writer 就會各自漂移、造成分割兩檔不一致。照抄此骨架是「分割兩檔天生一致」的唯一保證。
+
+```csharp
+// ① using 排序（固定順序；net10 或無 global using 的測試專案必含 using Xunit;）
+using AwesomeAssertions;
+using AutoFixture;                          // 若使用 AutoFixture
+using AutoFixture.AutoNSubstitute;          // 若使用 auto-mocking
+using Microsoft.Extensions.Time.Testing;    // 若有 FakeTimeProvider
+using NSubstitute;                          // 若有 Mock 依賴
+using System.IO.Abstractions;               // 若有 IFileSystem
+using System.IO.Abstractions.TestingHelpers;// 若有 MockFileSystem
+using Xunit;                                // net10 / 無 global using 時必含
+using {RootNamespace}.Interfaces;
+using {RootNamespace}.Models;
+using {RootNamespace}.Services;
+
+namespace {TestRootNamespace}.{SubFolder};
+
+/// <summary>
+/// class {TestClassName} - {被測類別} 測試類別（{負責方法清單}）
+/// </summary>
+public class {TestClassName}
+{
+    // ② 欄位宣告順序固定：_fixture → 各 mock 依賴 → _timeProvider → _sut
+    private readonly IFixture _fixture;
+    private readonly I{Dependency} _{dependency};
+    private readonly FakeTimeProvider _timeProvider;   // 若有 TimeProvider
+    private readonly {Sut} _sut;
+
+    public {TestClassName}()
+    {
+        // ③ constructor 區塊順序固定：fixture → mocks → timeProvider → SUT
+        _fixture = new Fixture();
+        _fixture.Behaviors.OfType<ThrowingRecursionBehavior>().ToList()
+            .ForEach(b => _fixture.Behaviors.Remove(b));
+        _fixture.Behaviors.Add(new OmitOnRecursionBehavior());
+
+        _{dependency} = Substitute.For<I{Dependency}>();
+
+        _timeProvider = new FakeTimeProvider();
+        _timeProvider.SetLocalTimeZone(TimeZoneInfo.Utc);
+        // 初始時間設為 06:00 UTC，讓所有測試方法皆可向前推進至任意時間點
+        _timeProvider.SetUtcNow(new DateTimeOffset(2024, 6, 15, 6, 0, 0, TimeSpan.Zero));
+
+        _sut = new {Sut}(_{dependency}, _timeProvider);
+    }
+
+    // ④ 每個被測方法一個 region，region 名稱 = 方法名
+    #region {MethodName}
+
+    [Fact]
+    public void {MethodName}_{情境}_應{預期}()
+    {
+        // ⑤ AAA 一律三段標示 + 空行分隔
+        // Arrange
+
+        // Act
+
+        // Assert
+    }
+
+    #endregion
+
+    // ⑥ helper 集中於最後一個 region，命名 CreateValid{Type}()，預設值用固定正值
+    #region 私有 Helper 方法
+
+    private {Type} CreateValid{Type}() => /* 固定正值預設，禁依賴 Random 範圍語義 */;
+
+    #endregion
+}
+```
+
+> ⚠️ **骨架中的 `①②③④⑤⑥` 編號與「區塊順序固定」「欄位宣告順序固定」之類的解說字串，僅為導引你理解的標記，禁止抄進實際測試碼。** 測試碼中**唯一保留的固定註解**是 FakeTimeProvider 的「初始時間設為 06:00 UTC…」那一行（其文字固定）；其餘結構解說一律不寫入測試碼，避免某 Writer 寫、某 Writer 不寫造成跨檔不一致。
+>
+> ⚠️ **測試資料的常數路徑/字串一律用 `const string`**（如 `const string path = "configs/app.config";`），禁某檔用 `const`、另一檔用 `var`。
+
+**骨架固定規則（八項，逐項對應上方註解編號）**：
+
+1. **① using 排序**：依上方順序，按需保留。**net10 或測試專案無 global using 時，必含 `using Xunit;`**。
+2. **② 欄位順序**：`_fixture` → 各 mock → `_timeProvider` → `_sut`，不得調換。
+3. **③ constructor 區塊順序**：fixture（**先移除 `ThrowingRecursionBehavior` 再 `Add(OmitOnRecursionBehavior)`**）→ mocks → timeProvider（`SetLocalTimeZone(Utc)` + 同格式註解 + `SetUtcNow`）→ SUT。**順序與註解文字固定**。**四個區塊之間一律以單一空行分隔**（fixture↔mocks↔timeProvider↔SUT 各空一行），不得省略或多加。
+4. **④ region**：每個被測方法一個 `#region {方法名}`。
+5. **⑤ AAA 標示**：一律 `// Arrange` / `// Act` / `// Assert` 三段 + 空行分隔。計時類測試若 Arrange 末行須緊接 Act，加註解 `// 注意：beforeCall 緊接 Act，中間不留空行以確保計時精度`。
+6. **⑥ helper**：集中在 `#region 私有 Helper 方法`，命名 `CreateValid{Type}()`。**建構方式統一用 `_fixture.Build<T>().With(...)`**（只指定測試所需的關鍵屬性，其餘交 AutoFixture 隨機填充），**禁止某檔用手動 `new T { ... }`、另一檔用 `Build<T>()`**（分割兩檔必須同一策略）。**關鍵屬性預設值用固定正值**（如薪資/金額用 `100_000m` 或 `faker.Finance.Amount(1000, 200000)`），**禁止依賴 `Random.Decimal` 等範圍語義**而可能產生非預期值。**分割模式下，同名 helper（如 `CreateValidEmployee`）的方法簽章、具名參數與每個預設值，兩檔必須完全相同**（禁一檔無參數、另一檔帶參數，或預設值語義不同）。
+7. **XML class 註解格式**：固定為 `/// class {TestClassName} - {被測類別} 測試類別（{負責方法清單}）`。
+8. **變體**：無依賴類別 → 省略 mock/timeProvider，`_sut = new {Sut}()`；`IFileSystem` 類別 → 欄位 `private readonly MockFileSystem _mockFileSystem;`，ctor 內 `_mockFileSystem = new MockFileSystem(); _sut = new {Sut}(_mockFileSystem);`；Validator → 用 FluentValidation TestHelper、不引入 AutoFixture/AwesomeAssertions（除非確有使用）。**同類別分割的所有 Writer 必須選用同一變體。**
+
 1. **共用欄位與 constructor**：當被測試類別有 2+ 個建構子依賴時，**必須**將所有 Mock 依賴、FakeTimeProvider、SUT 宣告為類別欄位，在 constructor 中初始化。**禁止在每個測試方法的 Arrange 中重複建立依賴和 SUT。**
 
    ```csharp
@@ -209,11 +299,15 @@ Read({analysisFilePath})
    - 情境常用詞彙：`輸入`、`給定`、`當`、`有效`、`無效`、`為null`、`已過期`、`各種`
    - 預期常用詞彙：`應回傳`、`應拋出`、`應為`、`應包含`、`應不發送`、`應正常處理`
    - 範例：`ProcessOrder_訂單有效且付款成功_應回傳成功結果`、`Divide_輸入10和0_應拋出DivideByZeroException`
+   - **必須是合法 C# 識別字**：方法名不得含 `%`、`.`、`/`、空白、`-` 等非法字元（否則 Executor 會因 CS1003 多花一輪修正）。中文情境若含這些字元，**於 Writer 端轉為語意化中文**。轉換對照：`%`→`百分之N`（如「20%獎金」→`百分之20獎金`）、`.`→`點`（如「3.5」→`3點5`）、`/`→`或`、空白→去除或以詞彙連接。
+   - **全中文、禁英文縮寫**：情境與預期一律中文，**禁止** `C_Reports`、`userId`、`Date`、`User` 等英文縮寫或欄位名直接入名（legacy 測試亦同）。需指涉英文識別字時改用中文描述（如「使用者編號」「日期欄位」、路徑前綴改描述為「Reports目錄」）。
+     - ⚠️ **即使直接採用 Analyzer 的 `suggestedTestScenarios` 命名，也必須先掃描其中是否殘留 `userId`/`Date`/`User` 等英文識別字，有則先轉成中文再用作方法名**（Analyzer 場景命名不保證已轉換，轉換責任在 Writer）。
 3. **AwesomeAssertions**：使用 `.Should()` 語法而非 xUnit 內建 `Assert.*`（依照 `awesome-assertions` Skill）
-4. **一個測試一個斷言概念**：每個測試方法驗證一個行為
+4. **一個測試一個斷言概念**：每個測試方法只驗證**一個行為**。**不同性質的驗證必須拆成不同測試** —— 例如「回傳的路徑/識別碼格式」與「檔案/報表的內容」是兩個獨立行為，**不可**在同一測試中既驗路徑格式（`StartWith`）又驗內容（`Contain`）；legacy 的副作用測試最易誤犯此錯。同一行為的多個屬性斷言（如同一回傳物件的多個欄位）可在一個測試內。
 5. **程式碼組織**：使用 `#region 方法名稱` / `#endregion` 組織測試方法群組（按被測試方法分組），不使用 `//-----` 註解分割線。每個 region 對應一個被測試方法的所有測試案例。
 6. **xUnit 屬性**：使用 `[Fact]` 和 `[Theory]`（搭配 `[InlineData]` 或 `[AutoData]`）
 7. **測試資料建構策略**：優先使用 AutoFixture 自動產生測試資料，而非手動 `new T { ... }` 建構物件。當只需要控制少數屬性時，使用 `fixture.Build<T>().With(x => x.Prop, value).Create()` 或讓 AutoFixture 自動填充不重要的屬性。**禁止**在整份測試檔案中出現大量重複的手動 `new T { ... }` 建構。
+   - **路徑跨平台**：測試資料中的路徑字串一律用跨平台寫法（正斜線 `/` 或 `Path.Combine`），**禁止硬編 `C:\` 等 Windows 絕對路徑**（包括 `MockFileSystem` 的鍵值與 legacy 真實 File.IO 測試資料）。
 8. **斷言覆蓋完整性**：當驗證方法回傳的物件時，優先使用 `.Should().BeEquivalentTo(expected)` 做物件級別比較，而非逐一比較個別屬性（如 `result.A.Should().Be(...)` + `result.B.Should().Be(...)`）。個別屬性斷言只在需要驗證單一特定欄位時使用。
 9. **Validator 測試模式**（當 `targetType === "validator"` 時）：
    - 使用 `validator.TestValidate(model)` 取代直接呼叫 `Validate()`
@@ -279,6 +373,8 @@ Read({analysisFilePath})
 
 如果現有 `.csproj` 缺少必要套件，使用 `Edit` 工具加入。如果現有 `.csproj` 已有套件但版本較舊，可依版本適配邏輯升級。
 
+> ⚠️ **分割模式的 `.csproj` 歸屬**：若呼叫者告知你是**分割組（非主組）Writer**，**不得修改 `.csproj`**（避免與主組 Writer 並行寫入造成 lost-update 競態）。此時只在 writer-result 的 `nugetChanges` **宣告**你所需的套件，由主組 Writer 統一加入、或由 Executor 於建置時補齊。
+
 #### 版本適配邏輯（依據原則 0）
 
 當你需要寫入或確認 `.csproj` 的套件版本時，依照以下步驟：
@@ -313,6 +409,12 @@ Read({analysisFilePath})
 | 缺建構子防禦 | 被測試類別建構子有 `?? throw new ArgumentNullException` 但無對應測試 | 補充建構子 null guard 測試 |
 | 未寫入磁碟 | 只在回應文字中輸出了測試程式碼，但未執行 `Write` 工具呼叫 | 立即使用 `Write` 工具將完整測試程式碼寫入 Step 3.5 確認的路徑 |
 | 英文測試命名 | 測試方法名稱使用英文（如 `Test_ValidOrder_ShouldPass`）而非中文三段式 | 將所有英文命名改為中文三段式格式 `方法_情境_預期` |
+| 偏離標準範本 | constructor 區塊順序、欄位順序、XML class 註解格式、region 風格、AAA 標示與「測試類別標準範本」骨架不符 | 比照標準範本骨架調整，使結構與骨架完全一致（分割模式下這是兩檔一致的關鍵） |
+| helper 預設值非正值 | `CreateValid{Type}()` 用 `Random.Decimal`／`Random.Number` 等範圍語義產生可能非預期的值（如薪資、金額） | 改用固定正值（如 `100_000m`）或 `faker.Finance.Amount(min, max)`，確保預設物件穩定有效 |
+| 非法識別字方法名 | 方法名含 `%`、`.`、`/`、空白、`-` 等非法字元（如 `應回傳20%獎金`） | 轉為語意化中文合法識別字（`%`→`百分之N`、`.`→`點`） |
+| 英文縮寫入名 | 方法名含 `C_Reports`、`userId`、`Date` 等英文縮寫或欄位名 | 改為全中文描述（「C槽Reports目錄」「使用者ID」「日期欄位」） |
+| 混合行為斷言 | 同一測試既驗路徑/格式（`StartWith`）又驗內容（`Contain`）等不同性質行為 | 拆成不同測試，一測一行為 |
+| 硬編 Windows 路徑 | 測試資料含 `C:\` 絕對路徑（MockFileSystem 鍵值或真實 File.IO） | 改用正斜線 `/` 或 `Path.Combine` |
 
 ### Step 5：寫入 writer-result 交接檔案（必要 — 寫完測試後立即執行）
 

@@ -193,6 +193,22 @@ permissionMode: bypassPermissions
 - [ ] lambda 委派宣告是否跨檔案一致（應統一使用 `var act = () =>`，禁止混用 `Action act = () =>`）
 - [ ] 物件比較斷言是否跨檔案一致（應統一使用 `BeEquivalentTo()` 或屬性逐一斷言，不得混用）
 - [ ] `using` 排列順序和組織方式是否跨檔案一致
+- [ ] **constructor 區塊順序**是否跨檔案一致（fixture → mocks → timeProvider → SUT；含 `ThrowingRecursionBehavior` 移除寫法、`SetUtcNow` 初始時間值）
+- [ ] **欄位宣告順序**是否跨檔案一致（`_fixture` → mocks → `_timeProvider` → `_sut`）
+- [ ] **XML class 註解格式**是否跨檔案一致（應統一為 `/// class {ClassName} - {被測類別} 測試類別（...）`）
+- [ ] **region 風格**是否跨檔案一致（每方法 `#region {方法名}`、helper 用 `#region 私有 Helper 方法`，禁混用 `//-----` 分隔線）
+- [ ] **AAA 標示**是否跨檔案一致（一律 `// Arrange`/`// Act`/`// Assert` + 空行分隔）
+- [ ] **helper 預設值策略**是否跨檔案一致（`CreateValid{Type}()` 預設值用固定正值，禁某檔用 `Random` 範圍語義、另一檔用固定值）
+- [ ] **Constructor null-guard 測試歸屬**：是否**只在主組檔出現一次**（分割組檔不應有 `#region Constructor`；兩檔皆寫=重複，兩檔皆缺=覆蓋缺口，均應標 warning）
+
+#### 3h. Production 重構 opt-in 旗標（當分析報告含 `legacyInfo.productionRefactorSuggestion`）
+
+> ℹ️ 當 Analyzer 報告的 `legacyInfo.productionRefactorSuggestion` 存在時執行此步驟。
+
+此情境（直接 File.IO + 硬編絕對路徑 + 無 IFileSystem）下，測試只能用真實 File.IO + 凌亂 workaround（建目錄、保護段、跨平台脆弱），品質先天受限。此問題的**根因在 production code，不在測試**，因此**不可**因此扣測試的分數到不合理程度。
+
+- 在回傳 JSON 加入 **`productionRefactorOptIn`** 欄位（**顯著呈現、與一般 `issues`/`suggestion` 區隔**），內容直接取自 `productionRefactorSuggestion`，並明確標示：「**此為需使用者同意的 production 重構建議**——若同意，可注入 `IFileSystem` 取代直接 `File.*`，測試即可改用 `MockFileSystem`、跨平台且不再真實寫檔。**未經同意不修改 production。**」
+- 對於「因硬編路徑/真實寫檔而被迫產生的 workaround」相關 issue，severity 最高標 `warning`（不標 `error`），並在 `description` 註明「根因為 production 硬編路徑，見 productionRefactorOptIn」。
 
 ### Step 4：產生審查報告
 
@@ -261,6 +277,17 @@ permissionMode: bypassPermissions
   ]
 }
 ```
+
+> **選用欄位 `productionRefactorOptIn`**（僅在分析報告含 `legacyInfo.productionRefactorSuggestion` 時加入，見 Step 3h）：
+> ```json
+> "productionRefactorOptIn": {
+>   "issue": "硬編 Windows 路徑 + 直接 File.IO，無法跨平台測試",
+>   "location": "GenerateReport 第 41 行",
+>   "hardcodedPath": "C:\\Reports\\",
+>   "recommendation": "建構式注入 IFileSystem 取代直接 File.*，測試即可改用 MockFileSystem",
+>   "note": "此為需使用者同意的 production 重構建議；未經同意不修改 production。同意後測試可跨平台且不再真實寫檔。"
+> }
+> ```
 
 ### 評分標準
 

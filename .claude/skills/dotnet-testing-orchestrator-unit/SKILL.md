@@ -185,6 +185,8 @@ analysisOutputPath: tests/MyProject.Core.Tests/.orchestrator/analysis/ProductSer
 3. 同時啟動 **最多 2 個 Writer subagent**（平行執行），每個 Writer 的 prompt 額外包含：
    - **明確指定只負責哪些方法**（列出方法名稱清單）
    - **告知 Writer 只處理指定方法的 scenarios**
+   - **Constructor null-guard 測試歸屬**：明確告知 **Writer 1（主要組）負責撰寫 Constructor null-guard 測試（`#region Constructor`）；Writer 2（分割組）不得撰寫**，避免兩檔重複或皆缺。
+   - **`.csproj` 修改歸屬**：明確告知 **只由 Writer 1（主要組）修改 `.csproj`**（新增 NuGet 套件、ProjectReference）；**Writer 2（分割組）不得修改 `.csproj`**，僅在 writer-result 的 `nugetChanges` 宣告所需套件。避免多 Writer 並行寫同一 `.csproj` 造成 lost-update 競態。
    - **指定使用獨立測試類別**（非 partial class），各自有獨立的 constructor、field、mock 設定
    - **指定輸出檔案路徑與獨立類別名稱**：
      - Writer 1（主要組）：`{TestDir}/Services/{ClassName}Tests.cs`（類別名稱：`{ClassName}Tests`）
@@ -214,35 +216,13 @@ ProductService 6 methods, 28 scenarios:
 3. **測試檔案的預期輸出路徑**（依照現有專案結構推導）
 4. **風格統一指令**（僅在觸發多 Writer 分割時提供）：
 
-   **斷言風格：**
-   - `ArgumentNullException` 參數驗證統一使用 `.WithParameterName("paramName")`
-   - 物件比較統一使用 `BeEquivalentTo()` 搭配 `options => options.Excluding(...)`
-   - 例外斷言統一使用 `.Throw<T>()`（同步）/ `.ThrowAsync<T>()`（非同步）
-   - lambda 委派宣告統一使用 `var act = () =>`
+   分割出的所有 Writer **一律遵循 `dotnet-testing-writer.md` 的「測試類別標準範本」骨架** —— constructor 區塊順序、using 排序、XML class 註解格式、欄位順序、region 風格、AAA 標示、helper 策略均已在該骨架固定，**不需在此逐條重列**。Orchestrator 只需傳遞下列 **per-run 差異參數**，確保各 Writer 選用同一變體與同一初始值：
 
-   **using 排列順序**（所有 Writer 必須完全一致）：
-   ```csharp
-   using AwesomeAssertions;
-   using AutoFixture;                          // 若有使用
-   using Microsoft.Extensions.Time.Testing;    // 若有 FakeTimeProvider
-   using NSubstitute;
-   using MyProject.Core.Interfaces;
-   using MyProject.Core.Models;
-   using MyProject.Core.Services;
-   ```
+   - **SUT 與依賴**：被測類別型別 + 建構子依賴清單（讓各 Writer 選用同一 SUT 變體：一般 service ／ 無依賴 ／ `IFileSystem`+`MockFileSystem` ／ validator）。
+   - **FakeTimeProvider 初始時間**（若有 `TimeProvider` 依賴）：統一指定**相同初始時間值**（建議 `06:00 UTC`：`new DateTimeOffset(2024, 6, 15, 6, 0, 0, TimeSpan.Zero)`），欄位統一命名 `_timeProvider`。
+   - **Constructor null-guard 測試歸屬**：明確告知「**只由主組 Writer 1 撰寫**」（見下方分割策略），分割組不重複。
 
-   **AutoFixture 初始化**（所有 Writer 統一）：
-   - 若 `requiredTechniques` 含 `autofixture-basics`：所有 Writer 統一使用 `private readonly IFixture _fixture = new Fixture();`
-   - 搭配 `OmitOnRecursionBehavior` 處理循環參考
-   - 禁止一個 Writer 用 AutoFixture 另一個不用
-
-   **FakeTimeProvider 初始化**（所有 Writer 統一）：
-   - 欄位命名統一使用 `_timeProvider`
-   - 所有 Writer 統一在 constructor 中設定 `SetLocalTimeZone(TimeZoneInfo.Utc)` 和**相同的初始時間**
-   - 建議初始時間：使用**當天最早的營業時間**（如 `06:00 UTC`），讓需要測試較晚時間的測試可以透過 `SetUtcNow()` 向前推進而不需要時間倒退
-   - 禁止分散到每個測試方法中各自設定 `SetLocalTimeZone()`
-
-   **目的**：確保多個 Writer 產出的測試檔案在所有面向上完全一致
+   **目的**：標準範本保證結構一致、per-run 參數保證變體與初始值一致 → 分割出的多檔在所有面向完全一致。
 
 > ⚠️ **禁止在 Writer prompt 中嵌入任何分析內容**（className、targetType、dependencies、requiredTechniques、suggestedTestScenarios、existingTestInfrastructure 等）。Writer 的 Step 0 會讀取交接檔案取得全部資訊。**如果你在 prompt 中提供了這些內容，Writer 可能跳過 Step 0 不讀交接檔案，導致下游交接斷裂。**
 
@@ -402,6 +382,10 @@ Bash 的 stdout **不會自動顯示給使用者**，必須由你親手複製貼
 
 當使用者要求套用 Reviewer 建議、修改既有測試、或增加測試案例時，使用此流程（而非重新執行完整四階段）。
 
+> **Production 重構 opt-in（Legacy 跨平台）**：當 Reviewer 回傳 `productionRefactorOptIn` 欄位時（被測類別有硬編絕對路徑 + 直接 File.IO + 無 IFileSystem），Orchestrator 在結果中**顯著呈現此建議**，並明確告知這是**需使用者同意才執行的 production code 修改**（注入 `IFileSystem`）。
+> - **預設不修改 production**。流程照常產出當下可用的測試（在 Windows 上可跑的 Characterization Test），絕不自動改 production。
+> - 僅當**使用者明確同意**後，才啟動針對性修改：先讓 Writer/Executor 修改 production（建構式注入 `IFileSystem`、以 `_fileSystem.*` 取代直接 `File.*`），再重寫測試改用 `MockFileSystem`。此修改**會動到 `src/` 生產程式碼**，屬此流程的特例（一般修改流程禁止改 production）。
+
 ### 流程（三階段）
 
 1. **Writer（修改模式）** — 傳遞 Reviewer 建議內容，讓 Writer 修改既有測試程式碼
@@ -496,6 +480,8 @@ node .claude/scripts/token-usage/token_usage.js report unit 2>/dev/null
 | Phase 2 Writer | **平行** | 每個目標獨立撰寫測試，在同一回應中發出多個 Agent tool 呼叫，每個 Writer 收到自己的分析報告 |
 | Phase 3 Executor | **循序** | 同專案 `dotnet build` 不可並行，需依序執行每個測試檔案 |
 | Phase 4 Reviewer | **平行** | 每份測試獨立審查，在同一回應中發出多個 Agent tool 呼叫 |
+
+> **`.csproj` 競態收斂（多目標）**：多目標時各類別的主組 Writer 仍可能並行觸及同一 `.csproj`。Phase 3 Executor 為**循序**、且在所有 Writer 之後執行——它會在建置時補齊缺漏套件（CS0246 → 加套件、NU1101 → 移除錯誤套件），作為 `.csproj` 的**最終收斂點**。因此即使並行 Writer 的 `.csproj` 寫入有 lost-update，Executor 仍會修正。Writer 端則透過「分割時只由主組改 `.csproj`」降低競態面。
 
 ### 多目標結果彙整
 
