@@ -2,6 +2,15 @@
 
 所有重要變更都記錄於此。格式參考 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [v1.3.0] - 2026-06-22
+
+TUnit 練習專案補上 FluentValidation 驗證器目標，補齊 TUnit 工作流程缺少的 validator 測試情境（unit 範例早有 3 個 validator，TUnit 範例先前一個都沒有）。經 net8 / net9 / net10 三版本 `dotnet build` 與 net9 端到端工作流程驗證（Analyzer 正確判定 `targetType=validator`、`forbidWriterSplit=true`、單一 Writer、`dotnet run` 全數通過）。本次僅異動 lab-only 內容（`samples/`、TUnit 使用指南、README），產品 agents / skills 未變。
+
+### 新增
+- TUnit 練習專案新增 `LibraryMemberValidator`（繼承 `AbstractValidator<LibraryMember>`）至 net8 / net9 / net10 三版本 src，含 5 條基本欄位規則（Name、Email、MembershipType、PhoneNumber 條件格式、JoinDate）與 2 條跨欄位規則（Vip 須為資深會員、Premium / Vip 必填電話），透過建構子注入 `TimeProvider`（預設 `TimeProvider.System`）使日期規則可由 `FakeTimeProvider` 控制
+- 三版本 src `.csproj` 加入 `FluentValidation 11.11.0`（對齊 unit 範例版本）；測試專案 `.csproj` 不變動，`FluentValidation.TestHelper` 經 `ProjectReference` 由 src 傳遞性引入，維持測試專案空白起點
+- `docs/TUNIT_TESTING_USAGE_GUIDE.md` 新增 validator 觸發範例與驗證重點（4.5 節）；`samples/tunit/practice_tunit/README.md` 補上 `Validators/` 目錄與 `LibraryMemberValidator`（P3-6）學習場景
+
 ## [v1.2.0] - 2026-06-16
 
 dotnet-testing-orchestrator-unit 單元測試工作流程強化。針對大型類別分割（多 Writer 平行）的跨檔不一致（L-1）、Legacy 跨平台難測、並行 csproj 競態等問題，調整 `analyzer` / `writer` / `reviewer` 三個 agent 與 unit orchestrator skill。經三支未污染驗證（多目標分割 / legacy / validator 非分割對照）確認生效且非分割路徑零退步。
