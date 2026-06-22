@@ -104,6 +104,8 @@ Read({analysisFilePath})
 - ❌ `<PackageReference Include="xunit" ...>`
 - ❌ `<OutputType>Library</OutputType>` 或省略 OutputType
 
+> **validator 目標（規則 B）**：**禁止**修改 tests `.csproj` 的套件 —— **不新增 `FluentValidation` PackageReference，也不新增任何 `ProjectReference`**。測試專案**既有的**、指向 SUT 專案的 `ProjectReference` 已傳遞性提供 `FluentValidation` 與 `TestHelper`（見 §3.10 規則 B）。
+
 #### 版本適配邏輯（依據原則 0）
 
 當你需要寫入或確認 `.csproj` 的套件版本時，依照以下步驟：
@@ -477,6 +479,36 @@ public class OrderValidatorTests
 }
 ```
 
+**時間相依 base object（規則 A）**：當 validator 驗證的日期欄位需對齊「注入的 `TimeProvider`」（analysis `timeProviderUsage` 非空，或 `specialHandling: "datetime"`）時，`CreateValid{Model}()` **必須是 instance 方法**，時間欄位由 `_timeProvider.GetUtcNow().UtcDateTime` 推導取安全的過去日期；**禁止** `DateTime.UtcNow` / `DateTime.Now` / 寫死日期字面值。非時間相依的 validator 維持 `static` + 固定值。
+
+```csharp
+private FakeTimeProvider _timeProvider;
+private LibraryMemberValidator _sut;
+
+[Before(Test)]
+public async Task Setup()
+{
+    _timeProvider = new FakeTimeProvider();
+    _timeProvider.SetUtcNow(new DateTimeOffset(2024, 1, 15, 6, 0, 0, TimeSpan.Zero));
+    _sut = new LibraryMemberValidator(_timeProvider);
+    await Task.CompletedTask;
+}
+
+// ✅ instance helper，時間欄位接 _timeProvider
+private LibraryMember CreateValidMember() => new LibraryMember
+{
+    Name = "張三",
+    Email = "test@example.com",
+    MembershipType = MembershipType.Basic,
+    JoinDate = _timeProvider.GetUtcNow().UtcDateTime.AddYears(-2),
+    PhoneNumber = null
+};
+// ❌ DateTime.UtcNow.AddYears(-2)（真實時鐘，與 FakeTimeProvider 混用）
+// ❌ new DateTime(2024, 6, 15)（寫死，與假時鐘隱性耦合）
+```
+
+**FluentValidation 套件（規則 B）**：validator 目標**保持 tests `.csproj` 不動**（框架必要的版本調整除外）。**禁止新增 `FluentValidation` PackageReference；禁止為了取得 FluentValidation 而新增任何 `ProjectReference`** —— 測試專案**既有的**、指向 SUT 專案的 `ProjectReference` 已傳遞性提供 `FluentValidation` 與 `FluentValidation.TestHelper`（v10+ 併入主套件）。若編譯時找不到 `TestHelper`，交由 Executor 排查，不是 Writer 加套件或加 reference 的訊號。
+
 **重要**：`using` 陳述式不需要包含 `AwesomeAssertions`，因為 FluentValidation TestHelper 的 `ShouldHaveValidationErrorFor` 本身就是斷言語法。
 
 #### 3.11 程式碼組織
@@ -599,6 +631,9 @@ tests/
 | 建構子初始化 | TUnit 使用 `[Before(Test)]` |
 | `IDisposable.Dispose()` | TUnit 使用 `[After(Test)]` |
 | `Assert.Equal()` / `Assert.True()` | 優先使用 AwesomeAssertions（除非展示 TUnit 原生斷言） |
+| `CreateValid{Model}()` 時間欄位用 `DateTime.UtcNow`/`DateTime.Now`/寫死日期 | 時間相依 base object 須由測試的 `_timeProvider.GetUtcNow()` 推導（規則 A） |
+| 為 validator 目標在 tests `.csproj` 加 `FluentValidation` | 經 SUT `ProjectReference` 傳遞性引入，重複加為冗餘（規則 B） |
+| 為取得 FluentValidation 而在 tests `.csproj` 新增第二個 `ProjectReference` | 既有指向 SUT 的 `ProjectReference` 已傳遞；多加會造成跨版本/重複型別污染（規則 B） |
 
 ---
 

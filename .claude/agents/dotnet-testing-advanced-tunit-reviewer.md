@@ -227,7 +227,8 @@ dotnet run --project <test-project-path> --no-build
 1. **巢狀 Validator 覆蓋**：若 `validatorInfo.nestedValidators[]` 不為空，讀取每個巢狀 Validator 原始碼，列出其所有 `RuleFor` 規則，確認每條規則都有對應的測試案例
 2. **CrossField 規則覆蓋**：`validatorInfo.crossFieldRules[]` 的每條跨欄位條件都有對應的測試
 3. **FluentValidation TestHelper 使用**：確認使用 `TestValidate()` + `ShouldHaveValidationErrorFor` / `ShouldNotHaveValidationErrorFor`，**不標記為警告**（此為 Validator 測試的正確語法，不需要 AwesomeAssertions）
-4. **CreateValid{Model}() helper**：確認存在 helper 方法用於建立合法 base object，且所有測試基於此 helper 進行變異
+4. **CreateValid{Model}() helper**：確認存在 helper 方法用於建立合法 base object，且所有測試基於此 helper 進行變異。**時間相依 base object（規則 A）**：當 base object 含「比對注入 `TimeProvider` 的日期欄位」時，helper 必須為 **instance 方法**、時間欄位由 `_timeProvider.GetUtcNow()` 推導；若 helper 用 `DateTime.UtcNow` / `DateTime.Now` / 寫死日期字面值，標記為問題（真假時鐘混用）
+5. **FluentValidation 套件來源（規則 B）**：validator 的 SUT 因繼承 `AbstractValidator<T>` 必然參考 FluentValidation，`FluentValidation.TestHelper`（v10+ 併入主套件）經 SUT 的 `ProjectReference` **傳遞性**流入測試專案。因此測試專案 `.csproj` **本來就不該、也不需要**有 `FluentValidation` 的 `PackageReference`。**不得**將「`using FluentValidation.TestHelper` 沒有對應 `PackageReference`」或「依賴傳遞性引入」標記為問題或改善建議，**也不得**建議新增 `PackageReference` 或 `ProjectReference`。此為設計上的正確狀態。
 
 ### 4h. 跨檔案一致性（Multi-Writer 分割時）
 

@@ -2,6 +2,15 @@
 
 所有重要變更都記錄於此。格式參考 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [v1.3.1] - 2026-06-22
+
+驗證器測試產出一致性修正。為 TUnit 範例新增 `LibraryMemberValidator` 後，對 net8 / net9 / net10 三版本各跑一次工作流程，暴露 Writer 對「時間相依 validator」與「FluentValidation 套件歸屬」的兩處非預期不一致。修正 `dotnet-testing-advanced-tunit-writer`、`dotnet-testing-writer`、`dotnet-testing-advanced-tunit-reviewer` 三個 agent。經 TUnit net8 / net9 / net10 與 Unit `OrderValidator` 四條路徑重新驗證，規則一致生效（net8 由前次建置失敗轉為 19/19 通過）。設計與計畫見 `docs/superpowers/specs/2026-06-22-writer-validator-time-csproj-design.md`。
+
+### 修正
+- **時間相依 validator base object（規則 A）**：`dotnet-testing-advanced-tunit-writer` 與 `dotnet-testing-writer` —— 當 validator 驗證的日期欄位需對齊「注入的 `TimeProvider`」時，`CreateValid{Model}()` helper 必須為 instance 方法、時間欄位由 `_timeProvider.GetUtcNow().UtcDateTime` 推導，禁用 `DateTime.UtcNow` / `DateTime.Now` / 寫死日期字面值，消除真假時鐘混用（非時間相依 validator 維持 static + 固定值，零變動）
+- **FluentValidation 套件歸屬（規則 B）**：兩個 Writer 明定 validator 目標**保持測試專案 `.csproj` 不動** —— 禁止新增 `FluentValidation` PackageReference，也禁止為取得 FluentValidation 而新增任何 `ProjectReference`；既有指向 SUT 的 `ProjectReference` 已傳遞性提供 `FluentValidation` 與 `TestHelper`。修掉前次 net8 加套件、net10 誤加跨版本 `ProjectReference`（NU1201 建置失敗）的不一致
+- **TUnit Reviewer 對齊規則 B**：`dotnet-testing-advanced-tunit-reviewer` —— validator 的傳遞性 FluentValidation 為設計上正確狀態，不得標記為問題或建議新增 `PackageReference` / `ProjectReference`，使判準與 `dotnet-testing-reviewer` 一致（先前會把傳遞性依賴標為 FAIL/改善點）
+
 ## [v1.3.0] - 2026-06-22
 
 TUnit 練習專案補上 FluentValidation 驗證器目標，補齊 TUnit 工作流程缺少的 validator 測試情境（unit 範例早有 3 個 validator，TUnit 範例先前一個都沒有）。經 net8 / net9 / net10 三版本 `dotnet build` 與 net9 端到端工作流程驗證（Analyzer 正確判定 `targetType=validator`、`forbidWriterSplit=true`、單一 Writer、`dotnet run` 全數通過）。本次僅異動 lab-only 內容（`samples/`、TUnit 使用指南、README），產品 agents / skills 未變。

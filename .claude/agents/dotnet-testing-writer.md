@@ -288,7 +288,7 @@ public class {TestClassName}
    // 測試 08:59 → SetUtcNow(08:59) ❌ Cannot go back in time!
    ```
 
-3. **共用 helper 方法**：當 3+ 個測試使用相同結構的輸入物件時，**必須**提取 `CreateValid{Type}()` 私有靜態 helper 方法。各測試只 override 需要差異化的屬性。
+3. **共用 helper 方法**：當 3+ 個測試使用相同結構的輸入物件時，**必須**提取 `CreateValid{Type}()` 私有靜態 helper 方法。各測試只 override 需要差異化的屬性。**例外（規則 A）**：若 base object 含比對注入 `TimeProvider` 的時間欄位，改為 instance helper、時間欄位由 `_timeProvider.GetUtcNow().UtcDateTime` 推導，禁靜態真實時鐘。
 
 3. **建構子 null guard 測試**：若被測試類別的建構子有 `?? throw new ArgumentNullException` 防禦，**必須**為每個有 null guard 的參數撰寫對應的建構子防禦測試。命名格式：`Constructor_{參數名稱}為null_應拋出ArgumentNullException`。
 
@@ -318,6 +318,8 @@ public class {TestClassName}
    - 自訂方法（`validatorInfo.customMethods[]`）：測試 `Must()` 方法的邏輯
    - 跨欄位規則（`validatorInfo.crossFieldRules[]`）：測試 `When`/`Unless` 條件
    - **測試案例數量控制**：Validator 的測試方法總數應以 `suggestedTestScenarios` 數量為基準（上限為 150%）。優先使用 `[Theory]` + `[InlineData]` 合併同一屬性多個等價邊界值，避免為每個無效值都建立獨立 `[Fact]`
+   - **時間相依 base object（規則 A）**：當 base object 含「比對注入 `TimeProvider` 的日期欄位」（`timeProviderUsage` 非空 或 `specialHandling: "datetime"`）時，`CreateValid{Type}()` 改為 **instance 方法**，時間欄位由 `_timeProvider.GetUtcNow().UtcDateTime.AddYears(-2)` 推導取安全過去日期；禁 `DateTime.UtcNow`/`DateTime.Now`/寫死日期。非時間相依 validator 維持 static + 固定正值。
+   - **FluentValidation 套件（規則 B）**：validator 目標**保持 tests `.csproj` 不動** —— **禁止新增 `FluentValidation` PackageReference，也禁止為取得 FluentValidation 而新增任何 `ProjectReference`**。測試專案既有的、指向 SUT 的 `ProjectReference` 已傳遞性提供 `FluentValidation` 與 `TestHelper`（v10+ 併入主套件）。
 9b. **Legacy Code 測試模式**（當 `targetType === "legacy"` 時）：
    - **Characterization Test 思維**：測試目的是「記錄現有行為」而非「驗證預期設計」
    - **讀取靜態資料**：參考 `legacyInfo.hardcodedData` 了解靜態類別中寫死的資料，根據實際資料設計測試
@@ -368,7 +370,7 @@ public class {TestClassName}
 | Bogus | `Bogus` |
 | TimeProvider | `Microsoft.Extensions.TimeProvider.Testing`（版本相依，對齊 `targetFramework` 主版號） |
 | IFileSystem | `System.IO.Abstractions`, `System.IO.Abstractions.TestingHelpers` |
-| FluentValidation | `FluentValidation`, `FluentValidation.DependencyInjectionExtensions`（如需要） |
+| FluentValidation | validator 目標**保持 tests `.csproj` 不動**：既有 SUT `ProjectReference` 已傳遞性提供（含 `TestHelper`），**不新增 PackageReference，也不新增任何 ProjectReference** |
 | 覆蓋率 | `coverlet.collector` |
 
 如果現有 `.csproj` 缺少必要套件，使用 `Edit` 工具加入。如果現有 `.csproj` 已有套件但版本較舊，可依版本適配邏輯升級。
@@ -405,6 +407,8 @@ public class {TestClassName}
 | Dispose 斷裂 | 存在 `CleanupFiles()` 方法但 `Dispose()` 未呼叫它 | 修正 `Dispose()` 呼叫 `CleanupFiles()` |
 | 多餘的 using | `using AwesomeAssertions;` 存在但無任何 `.Should()` 呼叫 | 移除該 using |
 | 時間不穩定 | `const int days =` 且測試依賴 `DateTime.Now` 的歷史日期比較 | 改為動態計算 |
+| 真假時鐘混用 | `CreateValid{Type}()` 時間欄位用 `DateTime.UtcNow`/`DateTime.Now` 而非注入的 `_timeProvider` | 改 instance helper，時間欄位由 `_timeProvider.GetUtcNow()` 推導（規則 A） |
+| 冗餘 ProjectReference | validator 測試為取得 FluentValidation 在 tests `.csproj` 新增第二個 `ProjectReference` | 移除；既有指向 SUT 的 `ProjectReference` 已傳遞（規則 B） |
 | 重複物件建構 | 相同結構的 `new Order { ... }` 或 `new T { ... }` 出現 3+ 次 | 提取 `CreateValid{Type}()` helper |
 | 缺建構子防禦 | 被測試類別建構子有 `?? throw new ArgumentNullException` 但無對應測試 | 補充建構子 null guard 測試 |
 | 未寫入磁碟 | 只在回應文字中輸出了測試程式碼，但未執行 `Write` 工具呼叫 | 立即使用 `Write` 工具將完整測試程式碼寫入 Step 3.5 確認的路徑 |
