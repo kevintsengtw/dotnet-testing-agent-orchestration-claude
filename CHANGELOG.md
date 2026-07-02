@@ -2,6 +2,13 @@
 
 所有重要變更都記錄於此。格式參考 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [v1.3.2] - 2026-07-02
+
+Writer agent 死碼清理。`dotnet-testing-writer` 的 Step 3（讀取被測試目標原始碼）有一段「若 Analyzer JSON 的 `methodSignatures` 已含完整方法簽章則跳過讀取原始碼」的 skip 條件，但 `dotnet-testing-analyzer` 從不輸出 `methodSignatures`、且明令禁止輸出 `methodsToTest[].returnType`，使該 skip 的 guard 永遠不成立——為不可達死碼，亦為日後可能被誤觸而降低測試品質的陷阱。經跨四套工作流程（Unit / Integration / Aspire / TUnit）× net8/9/10 共 33 次執行實證確認變更行為中性、無品質倒退。設計與驗證見 `docs/superpowers/specs/2026-06-30-writer-dead-handoff-skip-design.md`。
+
+### 修正
+- **清理不可達 skip 死碼**：`dotnet-testing-writer` Step 3 移除「若 `methodSignatures` 完整則跳過讀原始碼」的 skip 條件（guard 永不成立），改為 unit 專屬設計註記，明文鎖定「Analyzer 刻意不輸出 `methodSignatures` / `methodsToTest[].returnType`，回傳型別與方法實作行為一律由 Writer 讀原始碼取得」，防止日後被誤加回。**執行期行為不變**（skip 原本即不可達）；此變更僅限 unit writer——經查其餘三套 writer 無此 skip、改用 `sourceCodeContext` 交接，不受影響
+
 ## [v1.3.1] - 2026-06-22
 
 驗證器測試產出一致性修正。為 TUnit 範例新增 `LibraryMemberValidator` 後，對 net8 / net9 / net10 三版本各跑一次工作流程，暴露 Writer 對「時間相依 validator」與「FluentValidation 套件歸屬」的兩處非預期不一致。修正 `dotnet-testing-advanced-tunit-writer`、`dotnet-testing-writer`、`dotnet-testing-advanced-tunit-reviewer` 三個 agent。經 TUnit net8 / net9 / net10 與 Unit `OrderValidator` 四條路徑重新驗證，規則一致生效（net8 由前次建置失敗轉為 19/19 通過）。設計與計畫見 `docs/superpowers/specs/2026-06-22-writer-validator-time-csproj-design.md`。

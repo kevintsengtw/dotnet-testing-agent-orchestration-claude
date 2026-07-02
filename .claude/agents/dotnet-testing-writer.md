@@ -134,7 +134,7 @@ Read({analysisFilePath})
 2. **所有依賴介面的原始碼**（直接使用 Analyzer 報告中 `interfaceFilePath` 路徑）
 3. **相關 Model / DTO 的原始碼**（直接使用 Analyzer 報告中 `dependencies` 內列出的檔案路徑）
 
-> **注意**：如果 Analyzer JSON 的 `methodSignatures` 欄位已包含完整方法簽章，可跳過讀取被測試類別原始碼，直接使用 JSON 資料。僅在 `methodSignatures` 缺漏或不完整時才 Read 原始碼。
+> **設計註記（刻意不做簽章直傳）**：本單元測試工作流程中，Analyzer 刻意不輸出 `methodSignatures`，且明令禁止輸出 `methodsToTest[].returnType`——回傳型別與方法實作行為一律由 Writer 在此步驟讀取原始碼取得。因此不要在此處加入「若 Analyzer 提供簽章則跳過讀原始碼」之類的 skip 條件：簽章不足以支撐行為相依的斷言（例如「付款失敗應不寄確認信」需知道 method body 邏輯），啟用該捷徑會在無法察覺處降低測試品質。
 
 ### Step 4：撰寫測試程式碼
 
