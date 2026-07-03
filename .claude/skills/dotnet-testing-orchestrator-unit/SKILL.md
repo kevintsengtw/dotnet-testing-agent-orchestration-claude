@@ -128,6 +128,14 @@ node .claude/scripts/token-usage/token_usage.js start unit 2>/dev/null
 
 這標記本次工作流程的 token 計量起點，使 **Phase 0 清理用的 Executor 不被計入** token 統計，主執行緒也只計階段 1 之後。此呼叫**不是探索**（不讀原始碼、不 Grep），不受「啟動 Analyzer 前不得探索」限制。
 
+### Phase 0.6：使用者場景偵測（MVP：僅支援單一目標＋整段貼上）
+
+Phase 0.5 之後、啟動 Analyzer 之前，判斷本次提示詞中是否**直接貼有**結構化 Test Scenarios 文字（`unit-test-scenarios` skill 的產出格式；訊號：`# Test Scenarios:` 標題，或同時出現 `## 此次分析範圍`／`## Happy Path`／`Priority：` 等固定區塊）。
+
+- **此判讀僅讀提示詞本身的文字，不讀任何檔案、不 Grep，不算探索**，不受「啟動 Analyzer 前不得探索」限制。
+- 偵測到 → `userScenarios = { present: true, content: <整段原文> }`；未偵測到 → `present: false`（可整段省略提示詞欄位），Analyzer 走原生成流程，**現狀不變**。
+- **MVP 範圍限制**：僅支援**單一目標＋整段貼上**。若本次為多目標請求，或使用者僅提供附加檔案路徑（而非直接貼上文字），一律視為 `present: false`，Analyzer 走原生成流程（此為暫時限制，非最終設計，見 `docs/USER_SCENARIO_ADOPTION_DESIGN.md` §5.1-A/§6.5 的完整版本）。
+
 ### 階段 1：啟動分析（Analyzer）
 
 使用 Agent tool 將使用者指定的被測試目標交給 **dotnet-testing-analyzer** subagent 分析。
@@ -138,7 +146,8 @@ node .claude/scripts/token-usage/token_usage.js start unit 2>/dev/null
 - 被測試目標的類別名稱 / 方法名稱
 - 測試專案的路徑
 - **`analysisOutputPath`**：由 Orchestrator 預先計算好的交接檔案完整路徑，格式為 `{testProjectDir}/.orchestrator/analysis/{ClassName}.analysis.json`
-- 使用者的特殊需求（如果有的話）
+- 使用者的特殊需求（如果有的話，屬**範圍過濾**，如「只測試 ProcessOrder 方法」）
+- **`userProvidedScenarios`**（如果 Phase 0.6 偵測到有的話）：屬**可採用的場景來源**，與上一項的範圍過濾語意分離，見下方模板
 
 **精簡 prompt 範例**：
 ```
@@ -148,6 +157,20 @@ node .claude/scripts/token-usage/token_usage.js start unit 2>/dev/null
 analysisOutputPath: tests/MyProject.Core.Tests/.orchestrator/analysis/ProductService.analysis.json
 ```
 
+**Phase 0.6 偵測到使用者場景時，額外附加下列區塊**（取代上例，不與其並存）：
+```
+請分析被測試目標並產出結構化分析報告。
+被測試目標檔案路徑：src/MyProject.Core/Services/ProductService.cs
+測試專案路徑：tests/MyProject.Core.Tests/MyProject.Core.Tests.csproj
+analysisOutputPath: tests/MyProject.Core.Tests/.orchestrator/analysis/ProductService.analysis.json
+userProvidedScenarios:
+  present: true
+  sourceType: pasted
+  content: |
+    <整段 Test Scenarios 文字原樣附上>
+```
+未偵測到時，`userProvidedScenarios` 欄位整段省略，Analyzer 走原生成流程。
+
 > ⚠️ `analysisOutputPath` 必須由 Orchestrator 計算並提供。計算方式：從測試專案路徑去掉 `.csproj` 檔名，拼接 `.orchestrator/analysis/{ClassName}.analysis.json`。Analyzer **不需要自行推導路徑**。
 
 **等候 Analyzer 回傳精簡摘要**，包含：
@@ -156,6 +179,7 @@ analysisOutputPath: tests/MyProject.Core.Tests/.orchestrator/analysis/ProductSer
 - `requiredTechniques`、`skillMap`
 - `analysisFilePath`：Analyzer 實際寫入的交接檔案路徑（應與 `analysisOutputPath` 一致）
 - `projectContext`
+- **`scenarioSource`、`adoptedMethods`、`excludedMethods`**（僅採用模式時出現，見下方「結果整合與呈現」段落的採用摘要項目）
 
 **驗證交接檔案**：收到 Analyzer 摘要後，使用 Glob 確認 `analysisFilePath` 指向的檔案確實存在。若不存在，說明 Analyzer 未正確寫入，需排查問題。
 
@@ -336,7 +360,8 @@ rm -rf "{testProjectDir}/.orchestrator/executor-result/"
 4. **改善建議**（如果有的話）：Reviewer 的 `missingTestCases` 和 severity=warning 以上的問題
 5. **使用的技術組合**：列出哪些 Skills 被載入使用
 6. **Executor 修正紀錄**（如果有的話）：Executor 修正了哪些編譯/執行錯誤
-7. **各階段耗時摘要**：結果呈現結束後，**必須**輸出以下格式的耗時表格（從 hook 注入的耗時資訊中取得各階段時間）
+7. **採用摘要**（僅當 Analyzer 回傳 `scenarioSource === "adopted"` 時）：明確呈現「本次採用使用者提供的場景，涵蓋方法：{adoptedMethods}；未涵蓋而排除：{excludedMethods}（本次未納入測試）」。**不得省略排除清單**——這是使用者判斷本次涵蓋範圍是否符合預期的唯一依據
+8. **各階段耗時摘要**：結果呈現結束後，**必須**輸出以下格式的耗時表格（從 hook 注入的耗時資訊中取得各階段時間）
 
 **結果呈現完畢後，必須緊接著輸出耗時摘要（不可省略）：**
 

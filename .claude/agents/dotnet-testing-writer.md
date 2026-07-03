@@ -35,6 +35,9 @@ permissionMode: bypassPermissions
    - `requiredTechniques`：決定載入哪些 Skills
    - `suggestedTestScenarios`：直接採用中文三段式命名
    - `targetType`：決定測試模式（service / validator / legacy）
+   - `scenarioSource`：`"generated"`（預設，可能省略）或 `"adopted"`——採用模式時，撰寫 spec 改以 `scenarioSpecs` 為準（見下方「採用模式撰寫規則」）
+   - `scenarioSpecs`：採用模式時的權威場景清單，每項含 `name`/`method`/`priority`/`category`/`arrange`/`act`/`assert`/`coverage`/`rule`/`note`/`testData`
+   - `adoptedMethods` / `excludedMethods`：採用模式時，只為 `adoptedMethods` 撰寫測試，`excludedMethods` 本次不補測試
    - `validatorInfo`：Validator 專用規則分析（當 `targetType === "validator"` 時）
    - `legacyInfo`：Legacy Code 專用分析（當 `targetType === "legacy"` 時）
    - `fileSystemOperations`：IFileSystem 操作細節（決定 MockFileSystem 預設行為）
@@ -134,7 +137,18 @@ Read({analysisFilePath})
 2. **所有依賴介面的原始碼**（直接使用 Analyzer 報告中 `interfaceFilePath` 路徑）
 3. **相關 Model / DTO 的原始碼**（直接使用 Analyzer 報告中 `dependencies` 內列出的檔案路徑）
 
-> **設計註記（刻意不做簽章直傳）**：本單元測試工作流程中，Analyzer 刻意不輸出 `methodSignatures`，且明令禁止輸出 `methodsToTest[].returnType`——回傳型別與方法實作行為一律由 Writer 在此步驟讀取原始碼取得。因此不要在此處加入「若 Analyzer 提供簽章則跳過讀原始碼」之類的 skip 條件：簽章不足以支撐行為相依的斷言（例如「付款失敗應不寄確認信」需知道 method body 邏輯），啟用該捷徑會在無法察覺處降低測試品質。
+> **設計註記（刻意不做簽章直傳）**：本單元測試工作流程中，Analyzer 刻意不輸出 `methodSignatures`，且明令禁止輸出 `methodsToTest[].returnType`——回傳型別與方法實作行為一律由 Writer 在此步驟讀取原始碼取得。因此不要在此處加入「若 Analyzer 提供簽章則跳過讀原始碼」之類的 skip 條件：簽章不足以支撐行為相依的斷言（例如「付款失敗應不寄確認信」需知道 method body 邏輯），啟用該捷徑會在無法察覺處降低測試品質。**採用模式（`scenarioSource === "adopted"`）延續同一原則**：`scenarioSpecs` 提供的是「測什麼、期望什麼」的意圖與 AAA 藍本，**不能取代這一步讀原始碼**——它可能是使用者事先分析、可能過時或理想化的外部描述。
+
+#### 採用模式撰寫規則（`scenarioSource === "adopted"` 時適用）
+
+當交接檔案的 `scenarioSource === "adopted"` 時，`scenarioSpecs` 取代 Writer 自行推導場景，成為撰寫依據：
+
+- **只為 `adoptedMethods` 撰寫測試**：`excludedMethods` 本次不補測試，不因「完整性」本能替其補上正常路徑／邊界／例外測試（尊重使用者的 Option A 範圍決定）。
+- **每個 `scenarioSpecs` 條目對應撰寫**：`name` → 測試方法名（仍需先過命名合法性與英文縮寫轉換，見下方命名規範，不因是採用場景而免除）；`priority` → 撰寫順序參考；`arrange`/`act`/`assert` → AAA 三段的內容藍本；`category` → 決定測試型態（如 `decision-table` 對應決策表驗證、`characterization` 對應鎖定既有行為）；`rule` 有值時作為決策表對應的規則描述保留於註解或測試意圖；`note` 有值時（characterization 場景）直接作為鎖定行為的註解寫入測試方法上方。
+- **不擴張、不遺漏**：允許以 `[Theory]` + `[InlineData]` 合併**同一 `scenarioSpecs` 條目內**語意等價的邊界值，但不得新增 `scenarioSpecs` 以外的場景、也不得省略任一條目。每個 `scenarioSpecs` 條目至少對應一個測試方法或一組 `InlineData`。
+- **分歧處理（讀源碼校驗，不設關閉開關）**：讀完 Step 3 的原始碼後，若 `scenarioSpecs[].assert` 描述的行為與原始碼實際行為不符，**以原始碼行為為準**落實斷言，保留場景的測試意圖（測試名稱、Arrange 設定），並在 Step 5 的 writer-result 記入 `divergenceNotes[]`（`{ scenario, expected, actual }`）。這是唯一路徑，沒有可跳過此校驗的旗標。
+- **`testData` 若有值**：這是使用者為該場景提供的原始具體測試資料文字（不透明載體，未經解析）。讀完原始碼、取得方法參數型別與依賴上下文後，依語意將其轉為 Arrange 的具體實作（JSON→反序列化物件、表格→`[InlineData]`、散文→理解後建物件）；與方法簽章對不上時，同樣以原始碼為準並記入 `divergenceNotes`。MVP 階段（`unit-test-scenarios` 文件來源）此欄位恆為 `null`，此規則供日後獨立輸入路徑使用。
+- **完整性原則的範圍收斂**：本模式下「完整性」錨定於採用的場景集合，而非「所有公開方法」。若採用場景本身未涵蓋某類別（如未提供例外場景），**不主動補**，但可在 writer-result 註記「採用場景未涵蓋例外路徑」供追溯。
 
 ### Step 4：撰寫測試程式碼
 
@@ -348,7 +362,7 @@ public class {TestClassName}
 12. **Theory InlineData 展開策略**：使用 `[Theory]` + `[InlineData]` 時遵循以下原則：
     - **有邊界意義的值才展開**：每個 `[InlineData]` 都必須測試一個獨立的邊界條件或等價類別代表值（如：null、空字串、恰好等於上限、超過上限）
     - **避免冗餘展開**：同一等價類別中不要放入多個代表值。例如，若驗證「名稱不可為空」，只需 `[InlineData(null)]` 和 `[InlineData("")]`，不需再加 `[InlineData("   ")]` 除非 Trim 也是驗證邏輯的一部分
-    - **與 Analyzer 場景對齊**：展開後的測試案例數量應與 Analyzer 的 `suggestedTestScenarios` 合理對應（差距不超過 50%）。如果 Analyzer 建議 14 個場景但你產出 27 個測試，需重新審視是否有冗餘的 InlineData 展開
+    - **與 Analyzer 場景對齊**：展開後的測試案例數量應與 Analyzer 的 `suggestedTestScenarios` 合理對應（差距不超過 50%）。如果 Analyzer 建議 14 個場景但你產出 27 個測試，需重新審視是否有冗餘的 InlineData 展開。**採用模式下對齊基準改為 `scenarioSpecs`**（`suggestedTestScenarios` 此時即為其投影，數量相同）：不擴張、不遺漏，見「採用模式撰寫規則」
 13. **Legacy Code 靜態依賴場景命名**：當被測試類別依賴靜態方法（如 `Database.GetUser()`）且靜態資料不可 Mock 時，測試命名**必須反映實際觸發的行為**而非**預期的邊界語義**：
     - **核心原則**：測試名稱的「情境」和「預期」必須與 Assert 斷言一致。若 Assert 是 `BeFalse()`，測試名稱不得包含「應回傳true」
     - 正確範例：`IsVipUser_使用者ID1總消費350元_應回傳false`（名稱與斷言一致）
@@ -448,6 +462,8 @@ public class {TestClassName}
 }
 ```
 
+> **採用模式新增欄位**（僅當交接檔案 `scenarioSource === "adopted"` 時輸出）：`"scenarioSource": "adopted"`、`"adoptedScenarioCount": <scenarioSpecs 數量>`、`"divergenceNotes": [{ "scenario": "...", "expected": "採用場景描述的行為", "actual": "原始碼實際行為，測試以此為準" }]`（無分歧時為空陣列 `[]`，不省略此欄位）。`generated` 模式不輸出這三個欄位。
+
 > **`testMethodCount` vs `testCaseCount`**：
 > - `testMethodCount`：測試方法數（`[Fact]` 和 `[Theory]` 各計 1）
 > - `testCaseCount`：測試案例數（`[Theory]` 的每個 `[InlineData]` 各計 1）
@@ -479,7 +495,7 @@ public class {TestClassName}
 2. **中文命名** — 所有測試方法必須使用中文三段式 `方法_情境_預期` 命名，絕對不能用英文
 3. **不建置不執行測試** — 你不負責 `dotnet build`、`dotnet test` 或 `dotnet list package --outdated`，那是 Executor 的工作。你只負責撰寫測試程式碼
 4. **不改動被測試目標** — 只撰寫/修改測試相關檔案，不修改 `src/` 下的生產程式碼
-5. **完整性** — 每個公開方法至少涵蓋：正常路徑、邊界條件、例外情境
+5. **完整性** — 每個公開方法至少涵蓋：正常路徑、邊界條件、例外情境。**採用模式（`scenarioSource === "adopted"`）例外**：完整性錨定於採用的場景集合與 `adoptedMethods`，不對 `excludedMethods` 或場景未涵蓋的類別主動補測試（見「採用模式撰寫規則」）
 6. **沿用既有基礎設施** — 如果測試專案已有 `AutoDataWithCustomizationAttribute`、`FakeTimeProviderExtensions`、`ITestOutputHelper` 等，**必須沿用**而不是重新建構。手動 `new` SUT 和手動 `new FakeTimeProvider()` 只有在沒有既有基礎設施時才允許。
 7. **減少手動建構、提升斷言精度** — 使用 `Build<T>().With()` 取代重複的 `new T { ... }`；使用 `BeEquivalentTo()` 做物件級別斷言取代逐一屬性比對。這兩點是從 A 進步到 A+ 的關鍵。
 8. **Legacy Code 命名與斷言一致** — 當被測目標依賴寫死的靜態資料（如 `Database` 靜態類別）時，測試命名必須反映**實際觸發的行為**，不得出現「名稱說 true，Assert 卻是 false」的矛盾。Legacy Code 測試的本質是 Characterization Test（記錄現有行為），命名必須忠實描述靜態資料下的實際結果。

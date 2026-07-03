@@ -2,6 +2,17 @@
 
 所有重要變更都記錄於此。格式參考 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [v1.4.0] - 2026-07-03
+
+使用者測試情境採用機制 MVP（單目標＋整段貼上）。讓使用者事先以 `unit-test-scenarios` skill 產出的 Test Scenarios 文件，能被 `dotnet-testing-orchestrator-unit` 工作流程直接**採用**，而非由 Analyzer 自行從原始碼重新生成場景。範圍限定單一目標＋整段貼上提示詞、`testData` 恆為 `null`；多目標配對、附加檔案來源留待後續擴充。經 `OrderProcessingService.ProcessOrderAsync`（單方法、Option A 部分排除）與 `WeatherAlertService`（類別級、全採用）兩種範圍端到端驗證通過，皆一次建置成功、測試全數通過。設計見 `docs/USER_SCENARIO_ADOPTION_DESIGN.md`。
+
+### 新增
+- **場景偵測與交接**（`dotnet-testing-orchestrator-unit`）：新增 Phase 0.6，純判讀提示詞內是否貼有結構化 Test Scenarios 文字（不算探索、不受「啟動 Analyzer 前不得探索」限制），偵測到時於 Analyzer prompt 附加 `userProvidedScenarios` 區塊；結果整合新增「採用摘要」，顯著呈現本次涵蓋與排除的方法清單
+- **來源收斂與 Option A**（`dotnet-testing-analyzer`）：新增 Step 0.5 解析 `unit-test-scenarios` 固定輸出格式（Happy Path / 邊界條件 / 例外條件 / 分支規則與決策表 / 狀態與副作用 / Characterization Tests）為 `scenarioSpecs[]`，解析失敗時明確回報並退回 generated 模式，不靜默丟棄或半採用；`methodsToTest` 依採用場景收斂（Option A：只納入有場景的方法，其餘列入 `excludedMethods`，技術分析範圍隨之收斂）；輸出新增 `scenarioSource`/`adoptedMethods`/`excludedMethods`/`scenarioSpecs`；≤6 字命名限制與 Step 6.5 數量一致性驗證對採用場景放行/改錨點
+- **採用模式撰寫規則**（`dotnet-testing-writer`）：讀取 `scenarioSpecs` 作為撰寫依據（名稱／Priority／AAA／Rule／Note），延續既有設計**不因採用而跳過讀原始碼**——場景描述與原始碼實際行為分歧時，以原始碼為準落實斷言並記入 `divergenceNotes[]`；完整性原則收斂至採用場景集合，不替被排除方法或場景未涵蓋的類別主動補測試
+- 未提供場景時（`generated` 模式）三個檔案的既有行為**逐位元不變**：所有新增邏輯皆以 `userProvidedScenarios.present` / `scenarioSource === "adopted"` 為條件包裹
+- 新增 `.claude/skills/unit-test-scenarios/`：獨立於 orchestrator 之外，供使用者對任意 .NET 類別／方法產出結構化 Test Scenarios 文件的輔助 skill，是本機制的場景來源
+
 ## [v1.3.2] - 2026-07-02
 
 Writer agent 死碼清理。`dotnet-testing-writer` 的 Step 3（讀取被測試目標原始碼）有一段「若 Analyzer JSON 的 `methodSignatures` 已含完整方法簽章則跳過讀取原始碼」的 skip 條件，但 `dotnet-testing-analyzer` 從不輸出 `methodSignatures`、且明令禁止輸出 `methodsToTest[].returnType`，使該 skip 的 guard 永遠不成立——為不可達死碼，亦為日後可能被誤觸而降低測試品質的陷阱。經跨四套工作流程（Unit / Integration / Aspire / TUnit）× net8/9/10 共 33 次執行實證確認變更行為中性、無品質倒退。設計與驗證見 `docs/superpowers/specs/2026-06-30-writer-dead-handoff-skip-design.md`。

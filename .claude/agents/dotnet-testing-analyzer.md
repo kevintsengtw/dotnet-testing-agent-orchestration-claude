@@ -25,13 +25,39 @@ permissionMode: bypassPermissions
 1. **被測試目標的檔案路徑**（必要）— 如 `src/MyProject.Core/Services/ProductService.cs`
 2. **測試專案路徑**（必要）— 如 `tests/MyProject.Core.Tests/MyProject.Core.Tests.csproj`
 3. **`analysisOutputPath`**（必要）— 交接檔案的完整寫入路徑，如 `tests/MyProject.Core.Tests/.orchestrator/analysis/ProductService.analysis.json`
-4. **使用者的特殊需求**（可選）— 如「只測試 ProcessOrder 方法」
+4. **使用者的特殊需求**（可選）— 如「只測試 ProcessOrder 方法」，屬**範圍過濾**
+5. **`userProvidedScenarios`**（可選）— **可採用的場景來源**，與第 4 項的範圍過濾語意分離。MVP 結構：`{ present: bool, sourceType: "pasted", content: string }`。`present !== true` 時視同未提供
 
 我會自行讀取原始碼、掃描依賴、偵測目標類型、產出完整分析報告 JSON。
 
 ---
 
 ## 分析流程
+
+### Step 0.5：場景來源收斂與採用判定（MVP：僅支援整段貼上）
+
+在讀取被測試目標原始碼之前，先判定本次是否為「採用模式」：
+
+1. 若 `userProvidedScenarios.present !== true` → 設 `scenarioSource = "generated"`，**跳過本步驟餘下內容與後續所有採用相關步驟，直接走 Step 1 原生成流程**。這保證未提供場景時現狀 100% 不變。
+2. 否則設 `scenarioSource = "adopted"`，取 `userProvidedScenarios.content` 為待解析文字（MVP 僅支援 `sourceType: "pasted"`；其餘來源型別視為解析失敗，依第 4 點退回 generated）。
+3. 依下表解析為 `scenarioSpecs[]`（對應 `unit-test-scenarios` skill 的固定輸出格式）：
+
+   | 文件區塊 | 對應 `category` | 擷取欄位 |
+   |----------|----------------|---------|
+   | `## Happy Path` | `happy-path` | name / Priority / Arrange / Act / Assert / Coverage |
+   | `## 邊界條件` | `boundary` | 同上 |
+   | `## 例外條件` | `exception` | 同上 |
+   | `## 分支規則與決策表` | `decision-table` | 同上 + `Rule` |
+   | `## 狀態與副作用` | `state-side-effect` | 同上 |
+   | `## Characterization Tests` | `characterization` | 同上 + `Note` |
+
+   - `## 此次分析範圍` → 決定 `adoptedMethods`（列出的方法清單）。
+   - `## 測試範圍判斷` 的「不測範圍」→ 供 `excludedMethods` 佐證。
+   - 每條場景第一行反引號內的名稱 → `scenarioSpecs[].name`；`method` 由該名稱首段（`_` 分隔前段）推得。
+   - `testData` 欄位**恆為 `null`**（MVP：`unit-test-scenarios` 文件不含具體測試資料，見 `docs/USER_SCENARIO_ADOPTION_DESIGN.md` §6.3）。
+4. **解析失敗處理**：若 `content` 無法對應上述格式（非本 skill 產出，或關鍵區塊標題找不到任何一個），**明確回報無法解析、將 `scenarioSource` 改回 `"generated"`、走 Step 1 原生成流程**。不得靜默丟棄或半採用。
+
+> 此步驟只影響本次分析的**方法範圍**與**場景來源**，Step 2（依賴分析）、Step 3.1/3.2/3.3（技術細節分析）等技術分析照常執行，不因採用模式而簡化。
 
 ### Step 1：定位被測試目標
 
@@ -138,6 +164,8 @@ permissionMode: bypassPermissions
 | 具體類別（非介面） | `needsMock: false` | 可能需要 Test Double 或直接建構 |
 
 ### Step 3：分析方法簽章
+
+> **採用模式（`scenarioSource === "adopted"`）：Option A 範圍收斂**。`methodsToTest` **只保留 `adoptedMethods`**——即 `scenarioSpecs[].method` 涵蓋到的方法。其餘公開方法列入 `excludedMethods`，**不對其做本步驟的方法簽章分析**（不掃描例外、guard pattern、集合場景等）。`excludedMethods` 是「本次因場景未涵蓋而排除」的方法清單，不代表這些方法有問題。
 
 對每個要測試的公開方法，分析：
 
@@ -317,6 +345,8 @@ permissionMode: bypassPermissions
 
 > **精簡原則**：條件式欄位（`validatorInfo`、`legacyInfo`、`fileSystemOperations`、`timeProviderUsage`、`complexModelAnalysis`）**只在適用時輸出**，不適用時完全省略（不輸出 `null` 或空物件 `{}`）。例如：無 TimeProvider 依賴時，省略整個 `timeProviderUsage` 欄位。**禁止輸出** `namespace` 和 `filePath` 頂層欄位（Orchestrator 另行傳遞，不需重複）。**禁止輸出** `methodsToTest[].returnType`（Writer Step 3 直接讀原始碼取得）。
 
+> **採用模式新增欄位**（僅當 `scenarioSource === "adopted"` 時輸出；`generated` 模式下這些欄位完全省略，確保現狀不變）：`scenarioSource: "adopted"`、`adoptedMethods: string[]`、`excludedMethods: string[]`、`scenarioSpecs: [{ name, method, priority, category, arrange, act, assert, coverage, rule, note, testData }]`（欄位定義與解析規則見 Step 0.5；`rule`/`note`/`testData` 無值時為 `null`）。`suggestedTestScenarios[]` 此時改由 `scenarioSpecs[].name` 投影而得（每個元素等於對應 `scenarioSpecs[].name`），供舊版 Writer 向下相容；`methodScenarioCounts`/`methodCount`/`scenarioCount` 依 `scenarioSpecs`/`adoptedMethods` 重新計算（不再是全量生成值）。
+
 ```json
 {
   "className": "OrderProcessingService",
@@ -443,6 +473,8 @@ permissionMode: bypassPermissions
 
 在產出最終 JSON 之前，執行以下數量一致性檢查：
 
+> **採用模式（`scenarioSource === "adopted"`）時，錨點改為 `scenarioSpecs`**：`scenarioSpecs.length` 必須等於 `suggestedTestScenarios.length`（因後者為前者投影），且依 `method` 分組計數必須等於 `methodScenarioCounts`。**命名格式檢查（三段式、每段 ≤6 字）對 `scenarioSpecs` 來源的名稱一律放行**——採用進來的場景名稱原樣保留，不套用長度限制、不壓縮（generated 模式維持原限制不變）。另需檢查：`scenarioSpecs[].method` 必須都屬於 `adoptedMethods`；`adoptedMethods` 與 `excludedMethods` 交集必為空。以下 1～4 項在 generated 模式照常執行；adopted 模式下 1、2 項的「加總」改為對齊 `scenarioSpecs`。
+
 1. **場景總數對齊**：計算 `methodScenarioCounts` 所有值的加總，確認等於 `suggestedTestScenarios` 陣列的長度
    - 若不一致：補足遺漏場景，或修正 `methodScenarioCounts` 中的數字，以實際 `suggestedTestScenarios` 為準
 2. **精簡摘要的 `scenarioCount`**：等於 `suggestedTestScenarios.length`（非 `methodScenarioCounts` 加總，兩者必須相等）
@@ -502,6 +534,8 @@ permissionMode: bypassPermissions
   "analysisFilePath": "tests/MyProject.Core.Tests/.orchestrator/analysis/OrderProcessingService.analysis.json",
 ```
 
+> **採用模式時精簡摘要額外欄位**：`"scenarioSource": "adopted"`、`"adoptedMethods": [...]`、`"excludedMethods": [...]`，供 Orchestrator 呈現採用摘要（5.1-D）。`generated` 模式不輸出這三個欄位。
+
 > **`targetType === "validator"` 時的精簡摘要**：必須在頂層加入 `"forbidWriterSplit": true`：
 
 ```json
@@ -537,7 +571,9 @@ permissionMode: bypassPermissions
    - 情境詞彙：`有效`、`無效`、`為null`、`空`、`超限`
    - 預期詞彙：`應回傳`、`應拋出`、`應為`、`應不呼叫`
    - 範例：`ProcessOrder_訂單有效_應回傳成功`、`ProcessOrder_訂單為null_應拋出例外`
+   - **例外**：`scenarioSource === "adopted"` 時，`≤6 字` 限制不適用——採用進來的場景名稱（`scenarioSpecs[].name`）原樣保留，不壓縮使用者設計的描述性長命名。此限制僅約束 Analyzer **自行生成**的場景。
 4. **介面檔案路徑要正確** — 使用 `Grep` 確認實際路徑
 5. **沿用既有 pattern** — 如果測試專案已有 AutoFixture 自訂 Attribute 或基礎設施，必須在 `requiredTechniques` 中反映，確保 Writer 沿用而不重新發明
 6. **目標類型決定分析流程** — `targetType === "validator"` 時走 Step 1.5 的 Validator 專用分析流程，跳過 Step 3（方法簽章分析），`requiredTechniques` 自動包含 `fluentvalidation-testing`；`targetType === "legacy"` 時走 Step 1.5 的 Legacy Code 專用分析流程，`suggestedTestScenarios` 命名必須基於靜態資料的實際值（Characterization Test）
 7. **Legacy Code 場景命名** — 當 `targetType === "legacy"` 時，`suggestedTestScenarios` 中的每個測試命名**必須反映靜態資料的實際值和行為**。禁止產出「理想化邊界條件」的命名（如「總消費超過500_應回傳true」但靜態資料中無此使用者）。每個場景命名必須與 Assert 斷言一致。
+8. **採用模式不取代技術分析** — `scenarioSource === "adopted"` 只改變「場景從哪來、涵蓋哪些方法」，不減省 Step 2（依賴分析）、Step 3.1/3.2/3.3（IFileSystem／TimeProvider／Complex Model 深度分析）、Step 5（既有基礎設施掃描）。採用的場景提供的是「測什麼、期望什麼」，實際的依賴、回傳型別、行為細節仍由技術分析與下游 Writer 讀原始碼取得——採用不是省略分析的理由。
