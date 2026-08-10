@@ -2,6 +2,29 @@
 
 所有重要變更都記錄於此。格式參考 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [v1.5.0] - 2026-08-10
+
+共用技術 Skills 與 Claude 專屬 orchestration Skills 的路徑分離。共用技術 Skills 改以跨 Agent 生態慣例路徑 `.agents/skills/<skill-name>/SKILL.md` 作為 canonical location（注意是 `.agents` 複數）；Claude 專屬的 4 個 Orchestrator Skill 與 `dotnet-test` 維持在 `.claude/skills/`。subagent（Analyzer / Writer / Reviewer / Executor）以 `Read` 工具、**固定路徑** `.agents/skills/<name>/SKILL.md` 直接載入共用技術 Skill，不依賴 Claude Code 的原生 Skill 掃描，因此 `.claude/skills` 下**不需要**共用 Skill 的連結或副本。Agent 定義的 Skill 表格直接列出 `.agents/skills/...` 路徑，Analyzer 產出的短識別碼與 Skill selection 邏輯不變。四種 workflow、Analyzer → Writer → Executor → Reviewer 協作流程、run-state／artifacts schema、token 估算、hooks 與錯誤代碼一律未變更。配置與部署契約見 `docs/SKILL_LAYOUT.md`。
+
+### 新增
+- **Skill registry**（`.claude/scripts/skills/skill-registry.js`）：Skill 路徑分類的單一事實來源。提供 shared / claude-orchestration / claude-tool 三分類、識別碼→canonical 路徑對應（`TECHNIQUE_ALIASES`）、路徑正規化與去重（`canonicalizeSkillPath` / `dedupeSkillPaths`，防禦性地把殘留的 `.claude/skills/<shared>` 正規化回 canonical），以及以 **Skill ID**（非路徑前綴）分類的角色 read-scope 允許清單（`ROLE_READ_SCOPE` / `isSkillReadAllowed`）
+- **doctor validator**（`.claude/scripts/skills/skills-doctor.js`）：檢查 canonical 來源存在、共用 Skill 未殘留在 `.claude/skills`（連結或副本皆算重複來源，附移除指令）、Claude 專屬 Skill 位置、orchestration Skill 未被誤搬、agent 定義未用 `.claude/skills/<shared>` 錯誤路徑，以及 registry 漂移；有錯誤時離開碼 1
+- **測試**（`.claude/scripts/skills/skills.test.js`，32 項，零依賴）：路徑分類、canonical 路徑對應、雙前綴／Windows 分隔符／絕對路徑解析、殘留路徑去重、各角色 read-scope 邊界、doctor 各錯誤情境，以及真實 repo 佈局驗證（共用 Skill 只在 `.agents/skills`）
+- `docs/SKILL_LAYOUT.md`：Skill 分類、直接路徑載入方式、read-scope 與 token 去重規則，以及 VS Code Extension／installer 的部署契約
+
+### 變更
+- 29 個 bundled 共用技術 Skills（`dotnet-testing-*`）由 `.claude/skills/` 移至 `.agents/skills/`
+- **`unit-test-scenarios` 外部化**：不再內含於本 repo，改由專屬公開 repo [kevintsengtw/unit-test-scenarios](https://github.com/kevintsengtw/unit-test-scenarios) 提供（可選外部安裝）。registry 標記為外部來源共用 Skill、`skills-doctor` 不要求其實體存在（缺席為 info、非 error；若誤放 `.claude/skills` 仍報錯）。它是 orchestrator 流程外部的輔助工具，不被任何 subagent 以 Skill 形式載入，故移除不影響採用機制（採用機制吃的是提示詞中貼上的 Test Scenarios 文字）
+- 16 個 agent 定義的 Skill 表格改為直接列出 `.agents/skills/<name>/SKILL.md` 路徑（subagent 以 `Read` 固定路徑載入），並加入 read-scope 邊界說明。既有短識別碼與 Skill selection 邏輯一律不變
+- 4 個 Orchestrator Skill 的「禁止直接讀取 SKILL.md」改為語意式限制：不得載入或直接讀取任何技術型 Skill，明確涵蓋 `.agents/skills/**` 與 `.claude/skills/**`（本 Skill 除外）
+- 同步 workflow 新增 `docs/SKILL_LAYOUT.md` 至公開 repo；`.claude/scripts/` 既有完整鏡射已涵蓋 skills registry/doctor 與測試
+- **公開 repo 一鍵安裝腳本廢除**：`scripts/install-dotnet-testing-agents.py` 停止維護，安裝責任移轉至 VS Code Extension；`PUBLIC_REPO_README.md` 安裝章節改寫為「VS Code Extension（推薦）＋ 手動部署」兩條路徑，手動部署逐項列出 `.claude/agents/`、`.claude/hooks/`、`.claude/skills/`、`.claude/scripts/`、`.agents/skills/` 五個部署目標
+
+### 修正
+- **TUnit／Aspire 階段 4 的可略過矛盾**：兩者 SKILL.md 的階段 4 章節帶有【可略過】標籤與跳過條件（Executor 首次全過即跳過 Reviewer），與同檔案硬性禁止條款 #5「Reviewer 無論如何都必須執行」直接矛盾，實測導致 TUnit 首次全過時真的跳過品質審查。移除標籤與跳過條件，與 Unit／Integration 既有的無條件措辭對齊。修正後實機重測 TUnit 在**完全相同的觸發條件**下（13/13 通過、修正迴圈 0）確實執行 Reviewer，並抓到先前跳過那次無人知曉的真實缺陷：測試專案 `.csproj` 缺少 `<IsTestProject>true</IsTestProject>`（兩次 `dotnet test` 皆正常通過，故不會由測試結果暴露）
+- **清理指令在 Windows 下無法解析，且失敗時無聲回報成功**：四份 Executor 的清理任務與 unit orchestrator 的 Phase 5 原以 `rm -rf {testProjectDir}/.orchestrator/` 刪除暫存目錄。範本結尾帶分隔符號，代入 Windows 反斜線路徑並加上引號後，尾端反斜線會跳脫結尾引號，指令在**解析階段**就失敗、根本不會送進 shell；原有的 `cmd /c rd /s /q` 備援預期的是「`rm -rf` 執行後失敗」，攔不到此情形。刪除一律改用 `node -e "require('fs').rmSync(...)"`（跨平台、不受 shell 引號影響，`node` 為既有需求），並明訂路徑一律正斜線、結尾不得帶分隔符號；`cmd /c rd` 備援移除（其針對的情境已不存在，保留只會遮蔽真正的失敗）。同時新增驗證步驟：刪除後確認目錄確實消失，取得 `CLEANUP_OK` 才得回傳 `cleanup-completed`，否則回傳 `cleanup-failed` 並附殘留清單，且**不重試**（已知失敗模式為指令字串無法解析，非暫時性，重試只會掩蓋正要觀察的訊號）。清理範圍未變動（unit 維持只刪 `executor-result/` 並保留 `analysis/`，其餘三套維持刪除整個 `.orchestrator/`）；Phase 0 前置清理委託同一段清理任務，一併受惠
+- **Phase 5 被整份略過（`.orchestrator/` 殘留的真正根因）**：四份 orchestrator 的「各階段必要輸出」表把 token 報表列為**「真正最後一步」**、Token 章節自稱**「強制最終輸出」**與「整個工作流程的最後一個必要產出」，而 Phase 5 要求在結果呈現「之後」才執行——終止契約指向 Phase 5 以外的步驟，且衝突的另一方帶 ⛔ 強度。同時 Phase 5 是全流程唯一在該表中**沒有任何必要輸出**的步驟（全篇僅 2 次提及、自我檢查清單無對應項），既無機制促其執行，「未執行」與「執行了但沒講」在回覆中亦無法區分，只能靠殘留檔案反推。實測 Integration 連兩次從階段 4 直接進入 token 統計、全程未出現 Phase 5，而同批 TUnit／Aspire 正常執行——四份 Phase 5 章節措辭逐字相同，無文字差異可歸咎，屬欠缺執行機制下的非決定性行為。修正：把 Phase 5 納入強制輸出契約——必要輸出表新增「Token 表格之後（真正最後一步）」一列並移除 token 報表的終止標記、Token 章節改為「強制輸出」並明示其非流程結尾、修改流程收尾同步比照、自我檢查清單新增收尾鎖點，並要求 Phase 5 於可見回覆輸出一行狀態（`✅ Phase 5 後置清理完成` 或 `⚠️ …未完成 — 殘留：{清單}`）作為回覆最後一行。**該狀態行明訂必須依實際輸出決定**（unit 依驗證指令 stdout 的 `CLEANUP_OK`／`CLEANUP_FAILED`，其餘三套依 Executor 回傳的 `cleanup-completed`／`cleanup-failed`），不得憑印象或推定寫入，以免以假數據取代缺失。四份的 Phase 5 提及次數由 2 增為 8、章節位置一律未動
+
 ## [v1.4.0] - 2026-07-03
 
 使用者測試情境採用機制 MVP（單目標＋整段貼上）。讓使用者事先以 `unit-test-scenarios` skill 產出的 Test Scenarios 文件，能被 `dotnet-testing-orchestrator-unit` 工作流程直接**採用**，而非由 Analyzer 自行從原始碼重新生成場景。範圍限定單一目標＋整段貼上提示詞、`testData` 恆為 `null`；多目標配對、附加檔案來源留待後續擴充。經 `OrderProcessingService.ProcessOrderAsync`（單方法、Option A 部分排除）與 `WeatherAlertService`（類別級、全採用）兩種範圍端到端驗證通過，皆一次建置成功、測試全數通過。設計見 `docs/USER_SCENARIO_ADOPTION_DESIGN.md`。

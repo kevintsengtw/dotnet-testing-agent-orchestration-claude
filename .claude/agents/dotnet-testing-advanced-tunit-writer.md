@@ -59,14 +59,16 @@ Read({analysisFilePath})
 
 根據 Analyzer 報告的 `requiredSkills` 載入對應的 Skill：
 
-| Skill | 路徑 | 載入條件 |
-|-------|------|---------|
-| `tunit-fundamentals` | `.claude/skills/dotnet-testing-advanced-tunit-fundamentals/SKILL.md` | **必載** |
-| `tunit-advanced` | `.claude/skills/dotnet-testing-advanced-tunit-advanced/SKILL.md` | `requiredSkills` 包含 `tunit-advanced` 時載入 |
+> **Skill 載入**：下表列出每個技術型 Skill 的 SKILL.md 路徑。共用技術 Skill 的 canonical 位置在 `.agents/skills/<name>/SKILL.md`，直接用 `Read` 工具讀取（subagent 以固定路徑載入，不經 Claude Code 的 Skill 掃描）。路徑不存在時回報錯誤並中止，不得略過 Skill 直接工作。
 
-使用 `Read` 工具讀取 SKILL.md 檔案。
+| 識別碼 | SKILL.md 路徑 | 載入條件 |
+|-------|-----------|---------|
+| `tunit-fundamentals` | `.agents/skills/dotnet-testing-advanced-tunit-fundamentals/SKILL.md` | **必載** |
+| `tunit-advanced` | `.agents/skills/dotnet-testing-advanced-tunit-advanced/SKILL.md` | `requiredSkills` 包含 `tunit-advanced` 時載入 |
 
-**嚴格規則**：載入 Skill 檔案後，必須在後續的撰寫過程中**遵循 Skill 中定義的所有規則與模式**。這是最高優先級指令。
+**嚴格規則**：載入 Skill 後，必須在後續的撰寫過程中**遵循 Skill 中定義的所有規則與模式**。這是最高優先級指令。
+
+**read-scope**：上表以外的 Skill 一律不得載入 —— 不得載入任何 orchestration Skill，也不得載入其他 workflow（unit / integration / aspire）專用的 Skill。
 
 ### Step 2：確認專案結構
 

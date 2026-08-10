@@ -213,19 +213,44 @@ dotnet test <solution-path> --no-build --verbosity minimal --filter "FullyQualif
 
 ## 清理任務
 
-當 Orchestrator 以 `task: "cleanup"` 呼叫時，刪除指定測試專案下的 `.orchestrator/` 目錄：
+當 Orchestrator 以 `task: "cleanup"` 呼叫時，刪除指定測試專案下的 `.orchestrator/` 目錄。
+
+**路徑規範**（違反會導致指令在解析階段就失敗）：
+
+- 分隔符號一律用正斜線 `/`，即使在 Windows 也**不得**用反斜線
+- 路徑結尾**不得**帶分隔符號：用 `{testProjectDir}/.orchestrator`，不用 `{testProjectDir}/.orchestrator/`
+
+### 步驟 1：刪除
 
 ```bash
-rm -rf {testProjectDir}/.orchestrator/
+node -e "require('fs').rmSync('{testProjectDir}/.orchestrator',{recursive:true,force:true})"
 ```
 
-若 `rm -rf` 失敗（Windows 環境），使用備援方式：
+> **不得改用 `rm -rf`。** 在 Windows 等非 bash shell 下，路徑尾端的反斜線會跳脫結尾引號，指令根本不會被送進 shell 執行，失敗也攔不到。`node` 為本專案既有需求，跨平台可靠。
+
+### 步驟 2：驗證（不得略過）
 
 ```bash
-cmd /c "rd /s /q {testProjectDir}\\.orchestrator"
+node -e "const fs=require('fs'),p='{testProjectDir}/.orchestrator';console.log(fs.existsSync(p)?'CLEANUP_FAILED '+JSON.stringify(fs.readdirSync(p)):'CLEANUP_OK')"
 ```
 
-完成後回傳 `{ "status": "cleanup-completed" }`。
+### 步驟 3：依驗證結果回傳
+
+- 輸出 `CLEANUP_OK` → 回傳 `{ "status": "cleanup-completed" }`
+- 輸出 `CLEANUP_FAILED [...]`、或任一步驟指令執行失敗 → 回傳下列格式，**不重試**：
+
+```json
+{
+  "status": "cleanup-failed",
+  "targetPath": "{testProjectDir}/.orchestrator",
+  "remaining": ["驗證輸出中列出的殘留項目"],
+  "error": "實際的錯誤訊息或「刪除後目錄仍存在」"
+}
+```
+
+**未取得 `CLEANUP_OK` 之前，嚴禁回傳 `cleanup-completed`。**
+
+> **不重試是刻意設計**：已知失敗模式為指令字串無法解析（引號不成對），非暫時性，重試不會改變結果；且本步驟的目的正是讓清理失敗變得可觀察，重試會掩蓋該訊號。清理失敗的後果僅為留下暫存檔案，不值得增加韌性邏輯的複雜度。
 
 ---
 

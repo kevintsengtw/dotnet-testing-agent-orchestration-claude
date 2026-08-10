@@ -73,31 +73,35 @@ Read({analysisFilePath})
 
 ### Step 1：載入技術型 Skills（根據 `requiredTechniques`）
 
-根據 Analyzer 分析報告中的 `requiredTechniques` 清單，你**必須在單一回合中使用多個 Read 工具呼叫，平行讀取所有對應的 SKILL.md**。不要一個一個循序讀取。
+根據 Analyzer 分析報告中的 `requiredTechniques` 清單，你**必須在單一回合中平行載入所有對應的 Skill**。不要一個一個循序載入。
+
+> **Skill 載入**：下表列出每個技術型 Skill 的 SKILL.md 路徑。共用技術 Skill 的 canonical 位置在 `.agents/skills/<name>/SKILL.md`，直接用 `Read` 工具讀取（subagent 以固定路徑載入，不經 Claude Code 的 Skill 掃描）。路徑不存在時回報錯誤並中止，不得略過 Skill 直接工作。
 
 | 技術識別碼 | SKILL.md 路徑 |
-|-----------|--------------|
-| `unit-test-fundamentals` | `.claude/skills/dotnet-testing-unit-test-fundamentals/SKILL.md` |
-| `test-naming-conventions` | `.claude/skills/dotnet-testing-test-naming-conventions/SKILL.md` |
-| `xunit-project-setup` | `.claude/skills/dotnet-testing-xunit-project-setup/SKILL.md` |
-| `nsubstitute-mocking` | `.claude/skills/dotnet-testing-nsubstitute-mocking/SKILL.md` |
-| `autofixture-basics` | `.claude/skills/dotnet-testing-autofixture-basics/SKILL.md` |
-| `autofixture-customization` | `.claude/skills/dotnet-testing-autofixture-customization/SKILL.md` |
-| `bogus-fake-data` | `.claude/skills/dotnet-testing-bogus-fake-data/SKILL.md` |
-| `test-data-builder-pattern` | `.claude/skills/dotnet-testing-test-data-builder-pattern/SKILL.md` |
-| `autofixture-bogus-integration` | `.claude/skills/dotnet-testing-autofixture-bogus-integration/SKILL.md` |
-| `autofixture-nsubstitute-integration` | `.claude/skills/dotnet-testing-autofixture-nsubstitute-integration/SKILL.md` |
-| `autodata-xunit-integration` | `.claude/skills/dotnet-testing-autodata-xunit-integration/SKILL.md` |
-| `awesome-assertions` | `.claude/skills/dotnet-testing-awesome-assertions-guide/SKILL.md` |
-| `complex-object-comparison` | `.claude/skills/dotnet-testing-complex-object-comparison/SKILL.md` |
-| `fluentvalidation-testing` | `.claude/skills/dotnet-testing-fluentvalidation-testing/SKILL.md` |
-| `datetime-testing-timeprovider` | `.claude/skills/dotnet-testing-datetime-testing-timeprovider/SKILL.md` |
-| `filesystem-testing-abstractions` | `.claude/skills/dotnet-testing-filesystem-testing-abstractions/SKILL.md` |
-| `private-internal-testing` | `.claude/skills/dotnet-testing-private-internal-testing/SKILL.md` |
-| `test-output-logging` | `.claude/skills/dotnet-testing-test-output-logging/SKILL.md` |
-| `code-coverage-analysis` | `.claude/skills/dotnet-testing-code-coverage-analysis/SKILL.md` |
+|-----------|-----------|
+| `unit-test-fundamentals` | `.agents/skills/dotnet-testing-unit-test-fundamentals/SKILL.md` |
+| `test-naming-conventions` | `.agents/skills/dotnet-testing-test-naming-conventions/SKILL.md` |
+| `xunit-project-setup` | `.agents/skills/dotnet-testing-xunit-project-setup/SKILL.md` |
+| `nsubstitute-mocking` | `.agents/skills/dotnet-testing-nsubstitute-mocking/SKILL.md` |
+| `autofixture-basics` | `.agents/skills/dotnet-testing-autofixture-basics/SKILL.md` |
+| `autofixture-customization` | `.agents/skills/dotnet-testing-autofixture-customization/SKILL.md` |
+| `bogus-fake-data` | `.agents/skills/dotnet-testing-bogus-fake-data/SKILL.md` |
+| `test-data-builder-pattern` | `.agents/skills/dotnet-testing-test-data-builder-pattern/SKILL.md` |
+| `autofixture-bogus-integration` | `.agents/skills/dotnet-testing-autofixture-bogus-integration/SKILL.md` |
+| `autofixture-nsubstitute-integration` | `.agents/skills/dotnet-testing-autofixture-nsubstitute-integration/SKILL.md` |
+| `autodata-xunit-integration` | `.agents/skills/dotnet-testing-autodata-xunit-integration/SKILL.md` |
+| `awesome-assertions` | `.agents/skills/dotnet-testing-awesome-assertions-guide/SKILL.md` |
+| `complex-object-comparison` | `.agents/skills/dotnet-testing-complex-object-comparison/SKILL.md` |
+| `fluentvalidation-testing` | `.agents/skills/dotnet-testing-fluentvalidation-testing/SKILL.md` |
+| `datetime-testing-timeprovider` | `.agents/skills/dotnet-testing-datetime-testing-timeprovider/SKILL.md` |
+| `filesystem-testing-abstractions` | `.agents/skills/dotnet-testing-filesystem-testing-abstractions/SKILL.md` |
+| `private-internal-testing` | `.agents/skills/dotnet-testing-private-internal-testing/SKILL.md` |
+| `test-output-logging` | `.agents/skills/dotnet-testing-test-output-logging/SKILL.md` |
+| `code-coverage-analysis` | `.agents/skills/dotnet-testing-code-coverage-analysis/SKILL.md` |
 
-**你必須在一個回合內平行讀取所有指定的 SKILL.md，然後再開始撰寫測試。**
+**你必須在一個回合內平行載入所有指定的 Skill，然後再開始撰寫測試。**
+
+**read-scope**：上表以外的 Skill 一律不得載入 —— 不得載入任何 orchestration Skill，也不得載入其他 workflow（integration / aspire / tunit）專用的 Skill。
 
 如果 SKILL.md 中有 `references/` 目錄下的參考文件被提及，且與當前任務相關，也一併讀取。
 

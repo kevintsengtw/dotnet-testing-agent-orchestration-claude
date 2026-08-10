@@ -91,16 +91,20 @@ permissionMode: bypassPermissions
 
 > **⚡ 效率提示：請一次性批量讀取（並行）`skillMap.reviewer` 中的所有 SKILL.md，不要逐一循序讀取。** Analyzer 已根據被測試目標的特性計算出精確的 Skill 清單（固定 + 條件），你只需全部並行載入，無需重新推導。
 
+> **Skill 載入**：下表列出每個技術型 Skill 的 SKILL.md 路徑。共用技術 Skill 的 canonical 位置在 `.agents/skills/<name>/SKILL.md`，直接用 `Read` 工具讀取（subagent 以固定路徑載入，不經 Claude Code 的 Skill 掃描）。路徑不存在時回報錯誤並中止，不得略過 Skill 直接審查。
+
 | `skillMap.reviewer` 項目 | SKILL.md 路徑 | 審查面向 |
-|--------------------------|--------------|---------|
-| `test-naming-conventions` | `.claude/skills/dotnet-testing-test-naming-conventions/SKILL.md` | 命名規範 |
-| `awesome-assertions` | `.claude/skills/dotnet-testing-awesome-assertions-guide/SKILL.md` | 斷言品質 |
-| `unit-test-fundamentals` | `.claude/skills/dotnet-testing-unit-test-fundamentals/SKILL.md` | 測試結構 |
-| `nsubstitute-mocking` | `.claude/skills/dotnet-testing-nsubstitute-mocking/SKILL.md` | Mock 正確性（條件） |
-| `complex-object-comparison` | `.claude/skills/dotnet-testing-complex-object-comparison/SKILL.md` | 複雜物件比對（條件） |
-| `code-coverage-analysis` | `.claude/skills/dotnet-testing-code-coverage-analysis/SKILL.md` | 覆蓋率分析（條件） |
+|--------------------------|-----------|---------|
+| `test-naming-conventions` | `.agents/skills/dotnet-testing-test-naming-conventions/SKILL.md` | 命名規範 |
+| `awesome-assertions` | `.agents/skills/dotnet-testing-awesome-assertions-guide/SKILL.md` | 斷言品質 |
+| `unit-test-fundamentals` | `.agents/skills/dotnet-testing-unit-test-fundamentals/SKILL.md` | 測試結構 |
+| `nsubstitute-mocking` | `.agents/skills/dotnet-testing-nsubstitute-mocking/SKILL.md` | Mock 正確性（條件） |
+| `complex-object-comparison` | `.agents/skills/dotnet-testing-complex-object-comparison/SKILL.md` | 複雜物件比對（條件） |
+| `code-coverage-analysis` | `.agents/skills/dotnet-testing-code-coverage-analysis/SKILL.md` | 覆蓋率分析（條件） |
 
 > **備註**：若審查途中（Step 3f）發現顯著覆蓋率缺口，而 `code-coverage-analysis` 未在 `skillMap.reviewer` 清單中，可於此時補充載入。
+
+**read-scope**：上表以外的 Skill 一律不得載入 —— 不得載入任何 orchestration Skill、其他 workflow 專用 Skill，也不得讀取其他 agent 定義檔。
 
 ### Step 2：讀取被測試目標原始碼
 

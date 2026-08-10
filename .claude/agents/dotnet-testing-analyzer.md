@@ -326,7 +326,7 @@ permissionMode: bypassPermissions
 
 ### Step 6.1：產生 `skillMap.reviewer` 清單
 
-根據已確定的 `requiredTechniques` 內容，計算 Reviewer agent 需要的 Skill 清單，讓 Reviewer 可以**直接並行載入**，無需重新推導：
+根據已確定的 `requiredTechniques` 內容，計算 Reviewer agent 需要的 Skill 清單，讓 Reviewer 可以**直接並行載入**，無需重新推導。`requiredTechniques` 與 `skillMap.reviewer` 輸出的都是**識別碼**（Writer / Reviewer 依識別碼對應的 `.agents/skills/<name>/SKILL.md` 路徑載入），Analyzer **本身不載入任何技術型 Skill**：
 
 | `skillMap.reviewer` 欄位值 | 條件 |
 |---------------------------|------|

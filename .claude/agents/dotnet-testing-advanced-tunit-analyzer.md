@@ -161,12 +161,12 @@ permissionMode: bypassPermissions
 
 ### Step 4：決定 requiredSkills
 
-根據分析結果決定需要載入的 Skills：
+根據分析結果決定需要載入的 Skills。`requiredSkills` 輸出的是**識別碼**，Writer 依識別碼對應的 `.agents/skills/<name>/SKILL.md` 路徑載入，Analyzer **本身不載入任何技術型 Skill**：
 
 | 識別碼 | SKILL.md 路徑 | 載入條件 |
-|--------|---------------|---------|
-| `tunit-fundamentals` | `.claude/skills/dotnet-testing-advanced-tunit-fundamentals/SKILL.md` | **必載** |
-| `tunit-advanced` | `.claude/skills/dotnet-testing-advanced-tunit-advanced/SKILL.md` | 以下任一條件滿足時載入 |
+|--------|-----------|---------|
+| `tunit-fundamentals` | `.agents/skills/dotnet-testing-advanced-tunit-fundamentals/SKILL.md` | **必載** |
+| `tunit-advanced` | `.agents/skills/dotnet-testing-advanced-tunit-advanced/SKILL.md` | 以下任一條件滿足時載入 |
 
 **`tunit-advanced` 的載入觸發條件**：
 

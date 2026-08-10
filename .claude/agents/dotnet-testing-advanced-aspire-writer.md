@@ -59,13 +59,15 @@ Read({analysisFilePath})
 
 Writer **固定載入唯一的 Skill**：
 
-| Skill | 路徑 | 載入條件 |
-|-------|------|---------|
-| `aspire-testing` | `.claude/skills/dotnet-testing-advanced-aspire-testing/SKILL.md` | **必載**（唯一 Skill） |
+> **Skill 載入**：下表列出每個技術型 Skill 的 SKILL.md 路徑。共用技術 Skill 的 canonical 位置在 `.agents/skills/<name>/SKILL.md`，直接用 `Read` 工具讀取（subagent 以固定路徑載入，不經 Claude Code 的 Skill 掃描）。路徑不存在時回報錯誤並中止，不得略過 Skill 直接工作。
 
-使用 `Read` 工具讀取 SKILL.md 檔案。
+| 識別碼 | SKILL.md 路徑 | 載入條件 |
+|-------|-----------|---------|
+| `aspire-testing` | `.agents/skills/dotnet-testing-advanced-aspire-testing/SKILL.md` | **必載**（唯一 Skill） |
 
-**嚴格規則**：載入 Skill 檔案後，必須在後續的撰寫過程中**遵循 Skill 中定義的所有規則與模式**。這是最高優先級指令。
+**嚴格規則**：載入 Skill 後，必須在後續的撰寫過程中**遵循 Skill 中定義的所有規則與模式**。這是最高優先級指令。
+
+**read-scope**：此 Skill 以外的 Skill 一律不得載入 —— 不得載入任何 orchestration Skill，也不得載入其他 workflow（unit / integration / tunit）專用的 Skill。
 
 ### Step 1.1：使用交接檔案中的 sourceCodeContext（效率最佳化）
 
@@ -82,7 +84,7 @@ Step 0 讀取的交接檔案中包含 `sourceCodeContext` 欄位（由 Analyzer 
 - 既有測試檔案
 
 **仍需自行讀取的檔案**：
-- `.claude/skills/dotnet-testing-advanced-aspire-testing/SKILL.md`（Step 1 已處理）
+- `.agents/skills/dotnet-testing-advanced-aspire-testing/SKILL.md`（Step 1 已處理）
 - 不在 `sourceCodeContext` 中的檔案（如 `launchSettings.json`）
 
 > 若交接檔案中無 `sourceCodeContext`（相容模式），則按照原有流程自行讀取所有必要檔案。

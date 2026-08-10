@@ -10,12 +10,13 @@
   - [架構概覽](#架構概覽)
   - [系統需求](#系統需求)
   - [安裝與環境設定](#安裝與環境設定)
-    - [一鍵安裝（推薦）](#一鍵安裝推薦)
-    - [步驟 1：Clone 儲存庫](#步驟-1clone-儲存庫)
-    - [步驟 2：安裝 Agent Skills](#步驟-2安裝-agent-skills)
-    - [步驟 3：確認完整 .claude/ 目錄結構](#步驟-3確認完整-claude-目錄結構)
-    - [步驟 4：安裝計時 Hook（可選）](#步驟-4安裝計時-hook可選)
-    - [步驟 5：驗證安裝](#步驟-5驗證安裝)
+    - [方式 A：VS Code Extension（推薦）](#方式-avs-code-extension推薦)
+    - [方式 B：手動部署](#方式-b手動部署)
+      - [步驟 1：Clone 儲存庫](#步驟-1clone-儲存庫)
+      - [步驟 2：複製部署目標](#步驟-2複製部署目標)
+      - [步驟 3：確認完整目錄結構](#步驟-3確認完整目錄結構)
+      - [步驟 4：安裝計時 Hook（可選）](#步驟-4安裝計時-hook可選)
+      - [步驟 5：驗證安裝](#步驟-5驗證安裝)
   - [快速開始](#快速開始)
   - [四種測試工作流程](#四種測試工作流程)
   - [練習專案](#練習專案)
@@ -49,7 +50,7 @@ Orchestrator Skill
 | ------------------- | ----------------- | --------------------- |
 | Claude Code CLI     | 最新版            | 必要                  |
 | .NET SDK            | 8.0 / 9.0 / 10.0 | 三個版本的練習專案     |
-| Node.js             | 最新版            | 用於安裝 Agent Skills |
+| Node.js             | 最新版            | 必要：skills-doctor、install-hooks.js、token-usage 引擎皆需要 |
 
 **整合測試 / Aspire 測試額外需要：**
 
@@ -68,50 +69,58 @@ dotnet workload install aspire
 
 ## 安裝與環境設定
 
-### 一鍵安裝（推薦）
+### 方式 A：VS Code Extension（推薦）
 
-Clone 本 repo 後，從 repo 根目錄執行安裝指令碼，有兩種呼叫方式：
+1. 到 [dotnet-testing-agent-vscode-extensions Releases](https://github.com/kevintsengtw/dotnet-testing-agent-vscode-extensions/releases) 下載最新版 `.vsix` 並安裝
+2. 在 VS Code 命令面板執行「初始化 Claude 模式」
 
-#### 方式 A：指定目標專案的工作區路徑（在本 repo 內執行）
+執行後會自動部署：
 
-```bash
-git clone https://github.com/kevintsengtw/dotnet-testing-agent-orchestration-claude.git
-cd dotnet-testing-agent-orchestration-claude
-python scripts/install-dotnet-testing-agents.py /path/to/your-project
-```
-
-#### 方式 B：切換到目標專案目錄後執行（目標預設為當前工作目錄）
-
-```bash
-git clone https://github.com/kevintsengtw/dotnet-testing-agent-orchestration-claude.git
-cd /path/to/your-project
-python /path/to/dotnet-testing-agent-orchestration-claude/scripts/install-dotnet-testing-agents.py
-```
-
-> **注意：** 指令碼必須從本 repo 的 `scripts/` 目錄執行，或透過完整路徑呼叫。勿將 `install-dotnet-testing-agents.py` 單獨複製到目標專案執行，指令碼需要讀取本 repo 的 `.claude/` 來源目錄。
-
-指令碼會自動依序完成：複製 agents / hooks / skills（5 個）、從 GitHub 下載 Agent Skills（29+ 個）、執行 `install-hooks.js` 寫入 hooks 配置，並在結束後驗證安裝結果。
-
-**執行環境需求：** Python 3.8+、Node.js、網路連線。詳細說明請參閱 [scripts/README.md](scripts/README.md)。
+- `.claude/`：`agents/`（16 個 subagent 定義）、`hooks/`（計時 hook）、`skills/`（5 個 Claude 專屬 skills：`dotnet-test` + 4 個 orchestrator）、`scripts/`（skill registry、skills-doctor、token-usage 引擎）
+- `.agents/skills/`：29 個共用技術 Skills
 
 ---
 
-### 步驟 1：Clone 儲存庫
+### 方式 B：手動部署
+
+#### 步驟 1：Clone 儲存庫
 
 ```bash
 git clone https://github.com/kevintsengtw/dotnet-testing-agent-orchestration-claude.git
 cd dotnet-testing-agent-orchestration-claude
 ```
 
-### 步驟 2：安裝 Agent Skills
+#### 步驟 2：複製部署目標
 
-Writer Subagent 在撰寫測試時，需要載入各技術的 Skill 來確保輸出符合最佳實踐。這些 Agent Skills 由獨立 repo [`dotnet-testing-agent-skills`](https://github.com/kevintsengtw/dotnet-testing-agent-skills) 提供，需另行安裝到本 repo 的 `.claude/skills/` 目錄下。
+必須逐項複製以下五個目標，一個都不能少：
+
+| 目標 | 內容 | 來源 |
+| --- | --- | --- |
+| `.claude/agents/` | 16 個 subagent 定義 | 本 repo |
+| `.claude/hooks/` | 計時 hook + `install-hooks.js` | 本 repo |
+| `.claude/skills/` | 5 個：`dotnet-test` + 4 個 orchestrator | 本 repo |
+| `.claude/scripts/` | skill registry、skills-doctor、token-usage 引擎（**最容易漏，漏了會讓 token 用量功能與 doctor 失效**） | 本 repo |
+| `.agents/skills/` | 29 個共用技術 Skills（canonical location：`.agents/skills/<skill-name>/SKILL.md`） | [kevintsengtw/dotnet-testing-agent-skills](https://github.com/kevintsengtw/dotnet-testing-agent-skills) |
 
 ```bash
-npx skills install dotnet-testing-agent-skills
+mkdir -p /your-project/.claude
+cp -r .claude/agents/.  /your-project/.claude/agents/
+cp -r .claude/hooks/.   /your-project/.claude/hooks/
+cp -r .claude/skills/.  /your-project/.claude/skills/
+cp -r .claude/scripts/. /your-project/.claude/scripts/
+
+TMP_DIR=$(mktemp -d)
+git clone https://github.com/kevintsengtw/dotnet-testing-agent-skills.git "$TMP_DIR/dotnet-testing-agent-skills"
+mkdir -p /your-project/.agents/skills
+cp -r "$TMP_DIR/dotnet-testing-agent-skills/skills/dotnet-testing"* /your-project/.agents/skills/
+rm -rf "$TMP_DIR"
 ```
 
-安裝後，`.claude/skills/` 目錄下會新增以下 29 個 Agent Skill 目錄：
+> `dotnet-testing-agent-skills` 的 `skills/` 目錄除了這 29 個 `dotnet-testing-*` 之外，還有 `README.md` 與 `skill-creator-advanced/`，兩者**不屬於**本工作流程的共用技術 Skill。上面的指令以 `dotnet-testing*` 前綴過濾，只複製需要的 29 個；請勿改用 `cp -r .../skills/.` 整個目錄複製。萬用字元後也不要補上 `/`——macOS／BSD 的 `cp` 遇到帶尾斜線的來源會改為複製「目錄內容」，29 個 Skill 會被平攤合併成一份。
+
+Writer / Reviewer subagent 以固定路徑 `.agents/skills/<name>/SKILL.md` 用 Read 工具直接載入，**不需要**在 `.claude/skills` 建立連結。4 個 Orchestrator Skill 與 `dotnet-test` 屬 **Claude 專屬 Skill**，直接位於 `.claude/skills/`，不經 `.agents/skills`。完整規則見 [docs/SKILL_LAYOUT.md](docs/SKILL_LAYOUT.md)。
+
+部署完成後，`.agents/skills/` 目錄下應有以下 29 個共用技術 Skill 目錄：
 
 ```text
 dotnet-testing/
@@ -147,9 +156,9 @@ dotnet-testing-xunit-project-setup/
 
 每個 Skill 目錄內含 `SKILL.md`（部分含 `references/` 與 `templates/` 子目錄）。
 
-### 步驟 3：確認完整 .claude/ 目錄結構
+#### 步驟 3：確認完整目錄結構
 
-完成步驟 1（Clone）與步驟 2（安裝 Agent Skills）後，`.claude/` 的完整預期結構如下：
+完成步驟 1（Clone）與步驟 2（複製部署目標）後，完整預期結構如下。共用技術 Skills 位於 `.agents/skills/`（subagent 以固定路徑直接載入）；`.claude/skills/` 只放 4 個 orchestrator 與 `dotnet-test`：
 
 ```text
 .claude/
@@ -174,14 +183,19 @@ dotnet-testing-xunit-project-setup/
 │   ├── dotnet-testing-agent-timer-pre.sh
 │   ├── dotnet-testing-agent-timer-post.sh
 │   └── install-hooks.js
-└── skills/
-    ├── dotnet-test/                                         ← 本 repo 內建（5 個）
-    ├── dotnet-testing-orchestrator-unit/
-    ├── dotnet-testing-orchestrator-integration/
-    ├── dotnet-testing-orchestrator-aspire/
-    ├── dotnet-testing-orchestrator-tunit/
-    │
-    ├── dotnet-testing/                                      ← Agent Skills（29 個）
+├── skills/                                                ← Claude 專屬 Skill（5 個）
+│   ├── dotnet-test/
+│   ├── dotnet-testing-orchestrator-unit/
+│   ├── dotnet-testing-orchestrator-integration/
+│   ├── dotnet-testing-orchestrator-aspire/
+│   └── dotnet-testing-orchestrator-tunit/
+└── scripts/
+    ├── skills/                                             ← Skill registry + doctor validator
+    └── token-usage/                                        ← token 用量引擎
+
+.agents/
+└── skills/                                                 ← 共用技術 Skills 的 canonical 來源（29 個）
+    ├── dotnet-testing/                                     ← subagent 以固定路徑直接載入
     ├── dotnet-testing-advanced/
     ├── dotnet-testing-advanced-aspire-testing/
     ├── dotnet-testing-advanced-aspnet-integration-testing/
@@ -214,7 +228,7 @@ dotnet-testing-xunit-project-setup/
 
 > 安裝步驟 4（計時 Hook）完成後，會新增 `.claude/settings.json`。
 
-### 步驟 4：安裝計時 Hook（可選）
+#### 步驟 4：安裝計時 Hook（可選）
 
 ```bash
 node .claude/hooks/install-hooks.js
@@ -222,9 +236,14 @@ node .claude/hooks/install-hooks.js
 
 Hook 會自動記錄每個 Subagent 的執行耗時，執行後設定寫入 `.claude/settings.json`。未安裝時 Orchestrator 仍可正常運作，只是不會顯示耗時資訊。
 
-### 步驟 5：驗證安裝
+#### 步驟 5：驗證安裝
 
-在 Claude Code 中輸入以下任一指令，確認斜線指令可用：
+```bash
+node .claude/scripts/skills/skills-doctor.js
+ls -d .agents/skills/*/ | wc -l    # 應為 29
+```
+
+離開碼 0 代表五個部署目標齊備。數量不是 29 代表步驟 2 多複製了 `dotnet-testing-*` 以外的目錄（doctor 只檢查該有的 29 個是否到位，不會因多餘目錄報錯）。接著在 Claude Code 中輸入以下任一指令，確認斜線指令可用：
 
 ```text
 /dotnet-testing-orchestrator-unit
@@ -310,7 +329,6 @@ Hook 會自動記錄每個 Subagent 的執行耗時，執行後設定寫入 `.cl
 
 > 完整文件請參閱 [docs/README.md](docs/README.md)
 
-- 一鍵安裝指令碼：[scripts/README.md](scripts/README.md)
 - 安裝說明：[docs/SETUP.md](docs/SETUP.md)
 - 架構總覽：[docs/architecture/overview.md](docs/architecture/overview.md)
 - 使用指南：[docs/guides/](docs/guides/)

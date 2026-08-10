@@ -49,23 +49,27 @@ Read({analysisFilePath})
 
 ### Step 1：載入 Skills
 
-根據 Analyzer 回傳的 `requiredSkills` 清單，使用 `Read` 工具載入對應的 SKILL.md 檔案。
+根據 Analyzer 回傳的 `requiredSkills` 清單載入對應的 Skill。
+
+> **Skill 載入**：下表列出每個技術型 Skill 的 SKILL.md 路徑。共用技術 Skill 的 canonical 位置在 `.agents/skills/<name>/SKILL.md`，直接用 `Read` 工具讀取（subagent 以固定路徑載入，不經 Claude Code 的 Skill 掃描）。路徑不存在時回報錯誤並中止，不得略過 Skill 直接工作。
 
 #### 必載 Skill
 
-| Skill | 路徑 |
-|-------|------|
-| `webapi-integration-testing` | `.claude/skills/dotnet-testing-advanced-webapi-integration-testing/SKILL.md` |
+| 識別碼 | SKILL.md 路徑 |
+|-------|-----------|
+| `webapi-integration-testing` | `.agents/skills/dotnet-testing-advanced-webapi-integration-testing/SKILL.md` |
 
 #### 條件載入 Skills
 
-| Skill | 路徑 | 載入條件 |
-|-------|------|---------|
-| `aspnet-integration-testing` | `.claude/skills/dotnet-testing-advanced-aspnet-integration-testing/SKILL.md` | `apiArchitecture` 為 `controller-based` 或 `mixed` |
-| `testcontainers-database` | `.claude/skills/dotnet-testing-advanced-testcontainers-database/SKILL.md` | `containerRequirements` 含 SQL Server 或 PostgreSQL |
-| `testcontainers-nosql` | `.claude/skills/dotnet-testing-advanced-testcontainers-nosql/SKILL.md` | `containerRequirements` 含 MongoDB 或 Redis |
+| 識別碼 | SKILL.md 路徑 | 載入條件 |
+|-------|-----------|---------|
+| `aspnet-integration-testing` | `.agents/skills/dotnet-testing-advanced-aspnet-integration-testing/SKILL.md` | `apiArchitecture` 為 `controller-based` 或 `mixed` |
+| `testcontainers-database` | `.agents/skills/dotnet-testing-advanced-testcontainers-database/SKILL.md` | `containerRequirements` 含 SQL Server 或 PostgreSQL |
+| `testcontainers-nosql` | `.agents/skills/dotnet-testing-advanced-testcontainers-nosql/SKILL.md` | `containerRequirements` 含 MongoDB 或 Redis |
 
-**嚴格規則**：載入 Skill 檔案後，必須在後續的撰寫過程中**遵循 Skill 中定義的所有規則與模式**。這是最高優先級指令。
+**嚴格規則**：載入 Skill 後，必須在後續的撰寫過程中**遵循 Skill 中定義的所有規則與模式**。這是最高優先級指令。
+
+**read-scope**：上表以外的 Skill 一律不得載入 —— 不得載入任何 orchestration Skill，也不得載入其他 workflow（unit / aspire / tunit）專用的 Skill。
 
 ### Step 1.5：分析 DbContext 註冊模式
 

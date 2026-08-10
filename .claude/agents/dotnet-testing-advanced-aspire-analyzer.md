@@ -159,6 +159,8 @@ Aspire Analyzer **固定輸出單一 Skill**：
 "requiredSkills": ["aspire-testing"]
 ```
 
+識別碼 `aspire-testing` 對應 `.agents/skills/dotnet-testing-advanced-aspire-testing/SKILL.md`，由 Writer / Reviewer 依該路徑載入。Analyzer **本身不載入任何技術型 Skill**。
+
 ### Step 6：收集 sourceCodeContext（前向傳遞用）
 
 > 此步驟的目的是將你在 Step 1-4 中已讀取的原始碼檔案內容，**原封不動地收錄至輸出報告**，供下游 Writer 和 Reviewer 直接使用，避免重複讀取。

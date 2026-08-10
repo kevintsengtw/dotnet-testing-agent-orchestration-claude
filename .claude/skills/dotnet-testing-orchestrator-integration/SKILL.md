@@ -51,7 +51,11 @@ description: >
 
 ### 絕對禁止的行為
 
-1. **禁止直接讀取 SKILL.md 檔案** — Skills 的載入是 Writer subagent 的職責
+1. **禁止載入或直接讀取任何技術型 Skill** — 技術型 Skill 的載入是 Writer / Reviewer subagent 的職責。此限制**與 Skill 放在哪個目錄無關**，具體包含：
+   - 不得讀取 `.agents/skills/**/SKILL.md`（共用技術 Skill 的 canonical 來源）
+   - 除本 Skill（`dotnet-testing-orchestrator-integration`）外，不得讀取 `.claude/skills/**/SKILL.md`（其他 orchestration Skill）
+   - 不得讀取 `.claude/agents/*.md`（其他 agent 的定義檔）
+   - 以上限制與 Skill 放在哪個目錄無關；換一條路徑或別名不構成例外
 2. **禁止直接撰寫任何測試程式碼** — 包括測試類別、WebApiFactory、TestBase、GlobalUsings 等
 3. **禁止直接修改任何 .csproj 檔案** — NuGet 套件由 Writer 或 Executor 處理
 4. **禁止直接建立或修改任何 .cs 檔案** — 所有程式碼產出必須透過 subagent 完成
@@ -82,6 +86,8 @@ Agent(subagent_type="dotnet-testing-advanced-integration-reviewer", prompt="..."
 - ❓ 我是否正在嘗試讀取 SKILL.md？→ **停止，這是 Writer 的工作**
 - ❓ 我是否正在嘗試撰寫 C# 程式碼？→ **停止，交給 Writer**
 - ❓ 我是否正在嘗試執行 `dotnet build` 或 `dotnet test`？→ **停止，交給 Executor**
+
+- ❓ 我已貼出 Token 表格、正準備結束回覆？→ **停止，還有 Phase 5 後置清理，且必須輸出其狀態行**
 
 **在收到每個 subagent 的回傳結果之前，不得採取任何程式碼相關行動。**
 
@@ -212,7 +218,18 @@ executorResultFilePath: {executorResultFilePath}
 
 ### Phase 5：後置清理
 
-四階段流程全部完成、結果呈現給使用者之後（包含修改流程完成後），委託 Executor subagent 以 `task: "cleanup"` 清理 `{testProjectDir}/.orchestrator/` 目錄。
+四階段流程全部完成、**Token 用量表格貼出之後**（包含修改流程完成後），委託 Executor subagent 以 `task: "cleanup"` 清理 `{testProjectDir}/.orchestrator/` 目錄。**這是整個流程的最後一個動作，不得省略。**
+
+清理後**必須**在可見回覆輸出一行狀態，作為整段回覆的最後一行，依 Executor 的回傳決定：
+
+| Executor 回傳 | 必輸出文字 |
+|---|---|
+| `{ "status": "cleanup-completed" }` | `✅ Phase 5 後置清理完成` |
+| `{ "status": "cleanup-failed" }` | `⚠️ Phase 5 後置清理未完成 — 殘留：{回傳的 remaining 內容}` |
+
+⛔ **這一行必須依 Executor 的實際回傳決定，不得憑印象或推定寫入。** 沒收到回傳就寫「完成」，等於流程沒做卻回報成功——假數據比缺失更難察覺。
+
+⛔ **回覆中沒有這一行 = 流程未完成。**
 
 ---
 
@@ -242,7 +259,8 @@ executorResultFilePath: {executorResultFilePath}
 | 啟動 Reviewer **前** | `## 階段 4：啟動審查（Test Reviewer）` |
 | Reviewer 回傳後 | `✅ 階段 4 完成（{hook 注入的耗時}）` |
 | **結果呈現後** | 輸出 `### ⏱ 各階段耗時` 表格（見下方格式） |
-| **耗時表之後**（真正最後一步）| 執行 `report` 指令並**把其 stdout 表格貼進回覆**（⛔ 只跑不貼 = 未完成；見「📊 Token 用量」段） |
+| **耗時表之後** | 執行 `report` 指令並**把其 stdout 表格貼進回覆**（⛔ 只跑不貼 = 未完成；見「📊 Token 用量」段） |
+| **Token 表格之後**（真正最後一步）| 執行 Phase 5 後置清理，並輸出其狀態行（⛔ 回覆中沒有這一行 = 流程未完成；見「Phase 5：後置清理」段） |
 
 ---
 
@@ -276,9 +294,10 @@ executorResultFilePath: {executorResultFilePath}
 
 > 各階段耗時從 PostToolUse hook 注入的 `additionalContext` 中取得（格式：`耗時 M 分 S 秒`）。若分兩次啟動 Writer，階段 2 耗時取兩次之和。總計為四個階段之和。
 
-### 📊 本次工作流程 Token 用量（強制最終輸出，不可省略）
+### 📊 本次工作流程 Token 用量（強制輸出，不可省略）
 
-⛔ **這是整個工作流程的最後一個必要產出。只跑指令、沒把表格貼進可見回覆 = 未完成。**
+⛔ **只跑指令、沒把表格貼進可見回覆 = 未完成。**
+⛔ **這不是流程的結尾。** 貼出表格之後，仍須執行 Phase 5 後置清理並輸出其狀態行，該狀態行才是回覆的最後一行。
 Bash 的 stdout **不會自動顯示給使用者**，必須由你親手複製貼出。嚴格依序：
 
 1. 以 **Bash 工具**執行（此步只取得資料，使用者還看不到）：
@@ -339,7 +358,7 @@ Orchestrator 應在結果呈現的最後，提示使用者可用的操作：
 2. 套用了哪些 Reviewer 建議
 3. 重新評分結果（例：B+ → A）
 
-修改流程結果呈現後，**同樣執行 token 用量統計並親手貼出表格**（規則同主路徑「強制最終輸出」）：先以 Bash 工具執行下列指令，再把其 stdout 的整段 Markdown 表格**一字不改貼進可見回覆**作為最後一段（⛔ 只跑不貼 = 未完成）；收尾提示放在表格之後。
+修改流程結果呈現後，**同樣執行 token 用量統計並親手貼出表格**（規則同主路徑「強制輸出」）：先以 Bash 工具執行下列指令，再把其 stdout 的整段 Markdown 表格**一字不改貼進可見回覆**（⛔ 只跑不貼 = 未完成）；收尾提示放在表格之後。表格與收尾提示之後，**仍須執行 Phase 5 後置清理並輸出其狀態行**，該狀態行才是回覆的最後一行。
 
 ```bash
 node .claude/scripts/token-usage/token_usage.js report integration 2>/dev/null

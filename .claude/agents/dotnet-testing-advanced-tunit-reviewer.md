@@ -91,21 +91,25 @@ permissionMode: bypassPermissions
 
 ### Step 1：載入 Skills
 
-使用 `Read` 工具載入品質審查所需的 Skills：
+載入品質審查所需的 Skills：
+
+> **Skill 載入**：下表列出每個技術型 Skill 的 SKILL.md 路徑。共用技術 Skill 的 canonical 位置在 `.agents/skills/<name>/SKILL.md`，直接用 `Read` 工具讀取（subagent 以固定路徑載入，不經 Claude Code 的 Skill 掃描）。路徑不存在時回報錯誤並中止，不得略過 Skill 直接審查。
 
 #### 必載 Skills
 
-| Skill | 路徑 | 用途 |
-|-------|------|------|
-| `test-naming-conventions` | `.claude/skills/dotnet-testing-test-naming-conventions/SKILL.md` | 命名規範審查 |
-| `awesome-assertions-guide` | `.claude/skills/dotnet-testing-awesome-assertions-guide/SKILL.md` | 斷言品質審查 |
-| `tunit-fundamentals` | `.claude/skills/dotnet-testing-advanced-tunit-fundamentals/SKILL.md` | TUnit 基礎規範審查 |
+| 識別碼 | SKILL.md 路徑 | 用途 |
+|-------|-----------|------|
+| `test-naming-conventions` | `.agents/skills/dotnet-testing-test-naming-conventions/SKILL.md` | 命名規範審查 |
+| `awesome-assertions-guide` | `.agents/skills/dotnet-testing-awesome-assertions-guide/SKILL.md` | 斷言品質審查 |
+| `tunit-fundamentals` | `.agents/skills/dotnet-testing-advanced-tunit-fundamentals/SKILL.md` | TUnit 基礎規範審查 |
 
 #### 條件載入 Skills
 
-| Skill | 路徑 | 載入條件 |
-|-------|------|---------|
-| `tunit-advanced` | `.claude/skills/dotnet-testing-advanced-tunit-advanced/SKILL.md` | 測試使用了進階 TUnit 功能（MethodDataSource、Matrix、DI、Retry 等） |
+| 識別碼 | SKILL.md 路徑 | 載入條件 |
+|-------|-----------|---------|
+| `tunit-advanced` | `.agents/skills/dotnet-testing-advanced-tunit-advanced/SKILL.md` | 測試使用了進階 TUnit 功能（MethodDataSource、Matrix、DI、Retry 等） |
+
+**read-scope**：上表以外的 Skill 一律不得載入 —— 不得載入任何 orchestration Skill、其他 workflow 專用 Skill，也不得讀取其他 agent 定義檔。
 
 ### Step 2：讀取所有測試檔案
 

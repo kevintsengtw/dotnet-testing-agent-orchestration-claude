@@ -182,14 +182,14 @@ permissionMode: bypassPermissions
 
 ### Step 5：產生 requiredSkills 清單
 
-根據分析結果，決定 Writer 需要載入的 Skills：
+根據分析結果，決定 Writer 需要載入的 Skills。`requiredSkills` 輸出的是**識別碼**，Writer 依識別碼對應的 `.agents/skills/<name>/SKILL.md` 路徑載入，Analyzer **本身不載入任何技術型 Skill**：
 
 | 識別碼 | SKILL.md 路徑 | 載入條件 |
-|--------|--------------|---------|
-| `webapi-integration-testing` | `.claude/skills/dotnet-testing-advanced-webapi-integration-testing/SKILL.md` | **必載**（整合測試基礎） |
-| `aspnet-integration-testing` | `.claude/skills/dotnet-testing-advanced-aspnet-integration-testing/SKILL.md` | API 為 Controller-based 或 Mixed 時載入 |
-| `testcontainers-database` | `.claude/skills/dotnet-testing-advanced-testcontainers-database/SKILL.md` | `containerRequirements` 含 SQL Server 或 PostgreSQL 時載入 |
-| `testcontainers-nosql` | `.claude/skills/dotnet-testing-advanced-testcontainers-nosql/SKILL.md` | `containerRequirements` 含 MongoDB 或 Redis 時載入 |
+|--------|-----------|---------|
+| `webapi-integration-testing` | `.agents/skills/dotnet-testing-advanced-webapi-integration-testing/SKILL.md` | **必載**（整合測試基礎） |
+| `aspnet-integration-testing` | `.agents/skills/dotnet-testing-advanced-aspnet-integration-testing/SKILL.md` | API 為 Controller-based 或 Mixed 時載入 |
+| `testcontainers-database` | `.agents/skills/dotnet-testing-advanced-testcontainers-database/SKILL.md` | `containerRequirements` 含 SQL Server 或 PostgreSQL 時載入 |
+| `testcontainers-nosql` | `.agents/skills/dotnet-testing-advanced-testcontainers-nosql/SKILL.md` | `containerRequirements` 含 MongoDB 或 Redis 時載入 |
 
 ---
 
