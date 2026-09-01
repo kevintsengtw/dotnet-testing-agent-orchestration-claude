@@ -153,6 +153,7 @@ dotnet run --project <test-project-path> --no-build
 | 測試類別命名 | `{被測類別}Tests` | `EmployeeServiceTests`、`CalculatorTests` |
 | 測試方法命名 | 中文三段式 `方法_情境_預期` | `ValidateEmployee_名字為空_應回傳驗證失敗` |
 | 方法命名語意 | 情境與預期必須明確、具體 | ❌ `Calculate_失敗_回傳錯誤` → ✅ `CalculateBonus_績效為0_應擲出ArgumentException` |
+| **英文識別字殘留** | 情境與預期段出現連續 3 個以上英文字母，且屬**識別字**（參數名、屬性名、欄位名）而非**值或型別**。白名單：例外型別名、列舉值、語言字面值（`為null`、`true`）、型別成員值。**含直接採用自 `suggestedTestScenarios` 者** | ❌ `IsExpiringSoon_reservation為null_應拋出ArgumentNullException` → ✅ `IsExpiringSoon_預約為null_應拋出ArgumentNullException` |
 
 ### 4b. 斷言品質審查
 
@@ -234,15 +235,18 @@ dotnet run --project <test-project-path> --no-build
 4. **CreateValid{Model}() helper**：確認存在 helper 方法用於建立合法 base object，且所有測試基於此 helper 進行變異。**時間相依 base object（規則 A）**：當 base object 含「比對注入 `TimeProvider` 的日期欄位」時，helper 必須為 **instance 方法**、時間欄位由 `_timeProvider.GetUtcNow()` 推導；若 helper 用 `DateTime.UtcNow` / `DateTime.Now` / 寫死日期字面值，標記為問題（真假時鐘混用）
 5. **FluentValidation 套件來源（規則 B）**：validator 的 SUT 因繼承 `AbstractValidator<T>` 必然參考 FluentValidation，`FluentValidation.TestHelper`（v10+ 併入主套件）經 SUT 的 `ProjectReference` **傳遞性**流入測試專案。因此測試專案 `.csproj` **本來就不該、也不需要**有 `FluentValidation` 的 `PackageReference`。**不得**將「`using FluentValidation.TestHelper` 沒有對應 `PackageReference`」或「依賴傳遞性引入」標記為問題或改善建議，**也不得**建議新增 `PackageReference` 或 `ProjectReference`。此為設計上的正確狀態。
 
-### 4h. 跨檔案一致性（Multi-Writer 分割時）
+### 4h. 風格指令符合度
 
-> ℹ️ 當測試由多個 Writer 分割產出時，檢查以下跨檔案一致性項目。若只有單一 Writer，可略過此步驟。
+> ℹ️ 對照 Orchestrator 傳給 Writer 的風格指令逐項檢核。
 
-- [ ] `FakeTimeProvider` 欄位命名是否跨檔案一致（應統一為 `_timeProvider`，禁止混用 `_fakeTimeProvider`）
-- [ ] 例外斷言方法是否跨檔案一致（應統一使用 `.Throw<T>()`，禁止混用 `.ThrowExactly<T>()`）
-- [ ] lambda 委派宣告是否跨檔案一致（應統一使用 `var act = () =>`，禁止混用 `Action act = () =>`）
-- [ ] 物件比較斷言是否跨檔案一致（應統一使用 `BeEquivalentTo()` 或屬性逐一斷言，不得混用）
-- [ ] `using` 排列順序和組織方式是否跨檔案一致
+- [ ] `FakeTimeProvider` 欄位是否命名為 `_timeProvider`（不得用 `_fakeTimeProvider`）
+- [ ] 例外斷言是否使用 `.Throw<T>()`（不得用 `.ThrowExactly<T>()`）
+- [ ] lambda 委派宣告是否為 `var act = () => X()`（不得用 `Action act = () =>`，**亦不得用 `var act = async () => await X()` 的 async 包裝**）
+- [ ] **例外斷言參數名**：production 以 `nameof(x)` 拋出時是否接 `.WithParameterName("x")`
+- [ ] 物件比較是否使用 `BeEquivalentTo()`（逐一屬性斷言僅在驗證單一特定欄位時使用。**不得建議改成與指令相反的方向**）
+- [ ] `using` 排列順序是否符合指令
+- [ ] **檔內 `using` 是否重複宣告 `GlobalUsings.cs` 已涵蓋的命名空間**
+- [ ] 被測類別建構子有 `?? throw new ArgumentNullException` 時，是否有對應的 null-guard 測試
 
 ---
 

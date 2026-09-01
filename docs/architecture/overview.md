@@ -25,7 +25,7 @@ Agent Orchestration 是一種多 AI 代理協作模式：由一個「指揮者�
 - **Orchestrator**：負責任務拆解、順序協調與結果整合，本身不撰寫任何測試程式碼
 - **Subagent**：接受 Orchestrator 委派，專注執行單一職責（分析 / 撰寫 / 執行 / 審查）
 
-這種分工讓每個 Subagent 的 context 保持精簡，避免單一 AI 實例因上下文過長導致品質下降。
+這種分工讓每個 Subagent 的 context 保持精簡，避免單一 agent 因 context 過長導致品質下降。
 
 ### 為何 Orchestrator 使用 Skill 而非 Agent
 
@@ -152,15 +152,9 @@ graph LR
 flowchart TD
     Start([開始]) --> P0[Phase 0\n清理殘留 .orchestrator/ 目錄]
     P0 --> P1[Phase 1：Analyzer\n分析被測試目標\n產出 analysis.json]
-    P1 --> Check{方法數 > 5\n或情境數 > 20？}
-
-    Check -- 否 --> P2[Phase 2：Writer\n單一 Writer 撰寫所有測試]
-    Check -- 是 --> P2A[Phase 2a：Writer 1\n負責前半部方法]
-    Check -- 是 --> P2B[Phase 2b：Writer 2\n負責後半部方法]
-    P2A & P2B --> P2Merge[合併兩個 Writer 產出]
+    P1 --> P2[Phase 2：Writer\n一個被測類別一個 Writer\n產出單一測試檔案]
 
     P2 --> P3[Phase 3：Executor\ndotnet build\ndotnet test]
-    P2Merge --> P3
 
     P3 --> ExecCheck{全部通過？}
     ExecCheck -- 否，修正並重試\n最多 3 輪 --> P3
@@ -240,8 +234,8 @@ sequenceDiagram
 |---------|------|------|
 | Orchestrator 載體 | Skill（非 Agent） | Skill 在主對話中執行，才能透過 Agent tool 委派 Subagent；若定義為 Agent 則身處子對話，無法再對外委派 |
 | 執行權限 | `bypassPermissions: true` | 避免每次 `dotnet build` / `dotnet test` 需要手動確認，確保工作流程自動推進 |
-| 計時機制 | Hook（非 Bash date） | 與 Orchestrator 指令解耦，不佔用 Subagent 上下文；Hook 未安裝時流程仍可正常執行 |
-| 大型類別處理 | Writer 分割策略 | 方法數 > 5 或情境數 > 20 時，拆分為最多 2 個平行 Writer，避免單一 Subagent 因上下文過長導致品質下降 |
+| 計時機制 | Hook（非 Bash date） | 與 Orchestrator 指令解耦，不佔用 Subagent 的 context；Hook 未安裝時流程仍可正常執行 |
+| 大型類別處理 | 單一 Writer | 一個被測類別固定一個 Writer、一個測試檔案。早期版本會在方法數 > 5 或情境數 > 20 時拆為兩個平行 Writer，因平行 Writer 無法協調、跨檔寫法必然漂移而移除 |
 | 技能載入方式 | 動態載入 Agent Skills | Analyzer 依分析結果決定 Writer 需要哪些技能（AutoFixture / NSubstitute / AwesomeAssertions 等），按需載入，避免無謂的 context 佔用 |
 | 交接機制 | JSON 檔案（.orchestrator/） | Subagent 間透過 `.orchestrator/analysis/*.analysis.json` 傳遞結構化資料，而非在 prompt 中嵌入完整內容，保持每個 Subagent 的 prompt 精簡 |
 | 清理策略 | 保留 analysis/，刪除 executor-result/ | analysis.json 供外部量測工具（benchmark-token.ps1）讀取；executor-result/ 為暫存資料，每次流程結束後清理 |

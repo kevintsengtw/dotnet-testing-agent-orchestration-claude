@@ -36,7 +36,7 @@ subagent（Analyzer / Writer / Reviewer / Executor）以 `Read` 工具、**固�
 
 因為載入走的是 subagent 的 `Read` 工具（可讀任意路徑），**不依賴** Claude Code 的原生 Skill 掃描，所以共用技術 Skill **不需要**在 `.claude/skills` 下放連結或副本。`.claude/skills` 只保留 4 個 orchestrator（由 `/` 斜線指令觸發）與 `dotnet-test`（Executor 以路徑載入）。
 
-Agent 定義中的 Skill 表格直接列出 `.agents/skills/<name>/SKILL.md` 路徑；Analyzer 產出的 `requiredTechniques` / `requiredSkills` / `skillMap` 仍使用既有的**短識別碼**（如 `nsubstitute-mocking`），識別碼 → 路徑的對應在各 agent 定義的表格中，也記於 registry 的 `TECHNIQUE_ALIASES`。Skill selection 邏輯本身未改變。
+Agent 定義中的 Skill 表格直接列出 `.agents/skills/<name>/SKILL.md` 路徑，並使用既有的**短識別碼**（如 `nsubstitute-mocking`）標示，識別碼 → 路徑的對應記於 registry 的 `TECHNIQUE_ALIASES`。unit 工作流程的 Writer 與 Reviewer 自目錄選取要載入哪些（v1.6.0 起，Analyzer 不再產出 `requiredTechniques` / `skillMap`）；integration / aspire / tunit 仍依 Analyzer 的 `requiredSkills` 載入。無論何種選法，`ROLE_READ_SCOPE` 的允許清單都是硬邊界。
 
 > **為什麼不用 `.claude/skills` 相容連結？** 早期版本曾在 `.claude/skills` 放 junction／symlink 讓 Claude Code 原生掃描發現共用 Skill。但 subagent 本來就以固定路徑 `Read` 載入，連結是多餘的一層，還會造成「同一 Skill 兩份路徑」的去重與稽核負擔。改為直接指向 `.agents/skills` 後這層完全移除。
 

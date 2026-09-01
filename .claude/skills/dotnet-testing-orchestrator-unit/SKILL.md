@@ -98,6 +98,7 @@ Agent(subagent_type="dotnet-testing-reviewer", prompt="...")
 - ❓ 我是否正在嘗試撰寫 C# 程式碼？→ **停止，交給 Writer**
 - ❓ 我是否正在嘗試執行 `dotnet build` 或 `dotnet test`？→ **停止，交給 Executor**
 
+- ❓ 我已貼出耗時表、正要進入 Phase 5 或輸出收尾提示？→ **停止，Token 表格必須先貼**（⛔ 只跑指令不貼 = 未完成）
 - ❓ 我已貼出 Token 表格、正準備結束回覆？→ **停止，還有 Phase 5 後置清理，且必須輸出其狀態行**
 
 **在收到每個 subagent 的回傳結果之前，不得採取任何程式碼相關行動。**
@@ -106,9 +107,9 @@ Agent(subagent_type="dotnet-testing-reviewer", prompt="...")
 
 ## Prompt 精簡原則
 
-> ⚠️ **不需要在 subagent prompt 中嵌入完整分析報告 JSON、被測類別路徑、dependency 清單、requiredTechniques 完整陣列、suggestedTestScenarios、existingTestInfrastructure、targetType 等內容**。每個 subagent 已有 Step 0 讀取交接檔案的能力，可自行取得所有資訊。
+> ⚠️ **不需要在 subagent prompt 中嵌入完整分析報告 JSON、被測類別路徑、dependency 清單、suggestedTestScenarios、existingTestInfrastructure、targetType 等內容**。每個 subagent 已有 Step 0 讀取交接檔案的能力，可自行取得所有資訊。
 >
-> Orchestrator prompt 只需傳：**交接檔案路徑 + 摘要數字**（methodCount、scenarioCount、testCount 等）+ 必要的控制參數（風格統一指令、modification request 等）。
+> Orchestrator prompt 只需傳：**交接檔案路徑 + 摘要數字**（methodCount、scenarioCount、testCount 等）+ 必要的控制參數（modification request 等）。
 
 ---
 
@@ -182,7 +183,6 @@ userProvidedScenarios:
 **等候 Analyzer 回傳精簡摘要**，包含：
 
 - `className`、`targetType`、`methodCount`、`scenarioCount`、`methodScenarioCounts`
-- `requiredTechniques`、`skillMap`
 - `analysisFilePath`：Analyzer 實際寫入的交接檔案路徑（應與 `analysisOutputPath` 一致）
 - `projectContext`
 - **`scenarioSource`、`adoptedMethods`、`excludedMethods`**（僅採用模式時出現，見下方「結果整合與呈現」段落的採用摘要項目）
@@ -193,68 +193,17 @@ userProvidedScenarios:
 
 使用 Agent tool 將分析結果交給 **dotnet-testing-writer** subagent 撰寫測試。
 
-#### 大型類別 Writer 分割策略（獨立測試類別模式）
+**一個被測類別固定啟動一個 Writer，產出一個測試檔案。** 不論方法數或場景數多寡，都不拆分。
 
-當 Analyzer 回報的被測試類別規模較大時，為避免單一 Writer 回應超出長度限制，Orchestrator 應自動拆分為多個平行 Writer subagent。
-
-**觸發條件**（滿足以下**全部條件**才觸發）：
-
-- `methodCount > 5`（Analyzer 報告中的方法數量）或 `scenarioCount > 20`（Analyzer 報告中的建議測試案例總數）
-- **`forbidWriterSplit` 不為 `true`**（Analyzer 回傳 `"forbidWriterSplit": true` 時，無論規模多大，絕對禁止分割）
-
-> **Validator 類別永不分割**：當 `targetType === "validator"` 或 Analyzer 回傳 `"forbidWriterSplit": true` 時，必須使用單一 Writer 處理全部場景。CrossField 規則與一般欄位規則必須在同一個測試類別中，由同一個 Writer 一次性撰寫，才能避免重複測試案例。
-
-**分割策略**：
-
-1. **按方法邊界分組**：依 Analyzer 回傳的 `methodScenarioCounts` 進行平衡分配
-   - 將方法按 scenario 數量降序排列
-   - 使用貪心演算法：依序將每個方法分配到目前 scenario 總數較少的那一組
-   - 目標：兩組的 scenario 數量盡量接近
-   - **保證：同一方法的所有測試案例絕不拆分到不同組**
-2. 對應的 `suggestedTestScenarios` 跟著各自的方法分組
-3. 同時啟動 **最多 2 個 Writer subagent**（平行執行），每個 Writer 的 prompt 額外包含：
-   - **明確指定只負責哪些方法**（列出方法名稱清單）
-   - **告知 Writer 只處理指定方法的 scenarios**
-   - **Constructor null-guard 測試歸屬**：明確告知 **Writer 1（主要組）負責撰寫 Constructor null-guard 測試（`#region Constructor`）；Writer 2（分割組）不得撰寫**，避免兩檔重複或皆缺。
-   - **`.csproj` 修改歸屬**：明確告知 **只由 Writer 1（主要組）修改 `.csproj`**（新增 NuGet 套件、ProjectReference）；**Writer 2（分割組）不得修改 `.csproj`**，僅在 writer-result 的 `nugetChanges` 宣告所需套件。避免多 Writer 並行寫同一 `.csproj` 造成 lost-update 競態。
-   - **指定使用獨立測試類別**（非 partial class），各自有獨立的 constructor、field、mock 設定
-   - **指定輸出檔案路徑與獨立類別名稱**：
-     - Writer 1（主要組）：`{TestDir}/Services/{ClassName}Tests.cs`（類別名稱：`{ClassName}Tests`）
-     - Writer 2（分割組）：`{TestDir}/Services/{ClassName}_{MethodName}Tests.cs`（類別名稱：`{ClassName}_{MethodName}Tests`）
-     - Writer 2 的檔案與類別命名規則：
-       - 若分割組只包含 **1～2 個方法**：取該組中 scenario 數量最多的方法名稱作為代表（例如：`ProductService_CreateAsyncTests.cs`）
-       - 若分割組包含 **3 個以上方法**：改用語意化群組名稱（例如：`ProductService_QueryOperationTests.cs`）
-   - **說明獨立類別的好處**：每個類別有自己的 constructor / Dispose，複雜方法的 SUT 配置不會影響其他方法的測試 context
-
-**未觸發分割時**：維持現有行為，單一 Writer subagent 負責全部方法。
-
-**分割範例**：
-```
-ProductService 6 methods, 28 scenarios:
-  方法 scenario 數：CreateAsync(8), UpdateAsync(6), DeleteAsync(4), GetByIdAsync(4), GetAllAsync(3), ValidateAsync(3)
-  降序排列後貪心分配：
-    Group 1: CreateAsync(8) + GetByIdAsync(4) + ValidateAsync(3) = 15
-    Group 2: UpdateAsync(6) + DeleteAsync(4) + GetAllAsync(3) = 13
-  Writer 1 → ProductServiceTests.cs（負責 CreateAsync, GetByIdAsync, ValidateAsync）
-  Writer 2 → ProductService_UpdateAsyncTests.cs（負責 UpdateAsync, DeleteAsync, GetAllAsync）
-```
+輸出路徑依現有專案結構推導，類別名稱為 `{ClassName}Tests`、檔名為 `{ClassName}Tests.cs`。
 
 **傳給 Writer 的 prompt（依照 Writer 的輸入契約）：**
 
 1. **`analysisFilePath`** — Analyzer 交接檔案路徑（Writer 會在 Step 0 讀取完整分析 JSON）
 2. **被測試目標的檔案路徑**
 3. **測試檔案的預期輸出路徑**（依照現有專案結構推導）
-4. **風格統一指令**（僅在觸發多 Writer 分割時提供）：
 
-   分割出的所有 Writer **一律遵循 `dotnet-testing-writer.md` 的「測試類別標準範本」骨架** —— constructor 區塊順序、using 排序、XML class 註解格式、欄位順序、region 風格、AAA 標示、helper 策略均已在該骨架固定，**不需在此逐條重列**。Orchestrator 只需傳遞下列 **per-run 差異參數**，確保各 Writer 選用同一變體與同一初始值：
-
-   - **SUT 與依賴**：被測類別型別 + 建構子依賴清單（讓各 Writer 選用同一 SUT 變體：一般 service ／ 無依賴 ／ `IFileSystem`+`MockFileSystem` ／ validator）。
-   - **FakeTimeProvider 初始時間**（若有 `TimeProvider` 依賴）：統一指定**相同初始時間值**（建議 `06:00 UTC`：`new DateTimeOffset(2024, 6, 15, 6, 0, 0, TimeSpan.Zero)`），欄位統一命名 `_timeProvider`。
-   - **Constructor null-guard 測試歸屬**：明確告知「**只由主組 Writer 1 撰寫**」（見下方分割策略），分割組不重複。
-
-   **目的**：標準範本保證結構一致、per-run 參數保證變體與初始值一致 → 分割出的多檔在所有面向完全一致。
-
-> ⚠️ **禁止在 Writer prompt 中嵌入任何分析內容**（className、targetType、dependencies、requiredTechniques、suggestedTestScenarios、existingTestInfrastructure 等）。Writer 的 Step 0 會讀取交接檔案取得全部資訊。**如果你在 prompt 中提供了這些內容，Writer 可能跳過 Step 0 不讀交接檔案，導致下游交接斷裂。**
+> ⚠️ **禁止在 Writer prompt 中嵌入任何分析內容**（className、targetType、dependencies、suggestedTestScenarios、existingTestInfrastructure 等）。Writer 的 Step 0 會讀取交接檔案取得全部資訊。**如果你在 prompt 中提供了這些內容，Writer 可能跳過 Step 0 不讀交接檔案，導致下游交接斷裂。**
 
 **Writer prompt 模板**（嚴格照用，僅替換 `{...}` 佔位符）：
 ```
@@ -263,9 +212,7 @@ analysisFilePath: {analysisFilePath}
 被測試目標的檔案路徑: {filePath}
 測試檔案的預期輸出路徑: {outputPath}
 ```
-分割模式時額外加入：負責的方法清單、測試類別名稱、風格統一指令。
-
-**等候 Writer 回傳精簡摘要**：`testFilePaths`、`testCount`、`skillsLoaded`、`writerResultFilePath`
+**等候 Writer 回傳精簡摘要**：`testFilePaths`、`testCount`、`skillsConsulted`、`writerResultFilePath`
 
 ### 階段 3：啟動執行（Test Executor）
 
@@ -339,7 +286,13 @@ node -e "const fs=require('fs'),p='{testProjectDir}/.orchestrator/executor-resul
 
 ⛔ **這一行必須依驗證指令的實際輸出決定，不得憑印象或推定寫入。** 沒看到 `CLEANUP_OK` 就寫「完成」，等於流程沒做卻回報成功——假數據比缺失更難察覺。
 
-⛔ **回覆中沒有這一行 = 流程未完成。** 未取得 `CLEANUP_OK` 時不得宣告清理完成，亦不重試。
+⛔ **這一行必須輸出，且必須是整段回覆的最後一行。** 未取得 `CLEANUP_OK` 時不得宣告清理完成，亦不重試。
+
+> **該行缺席時的判讀（給閱讀回覆的人，非給本 Orchestrator）**：狀態行未出現在可見回覆
+> **不等於**流程未完成。環境彈窗、終端截斷、複製遺漏都可能讓它從可見回覆消失。
+> 缺席時一律**以磁碟為準**再判定：檢查 `{testProjectDir}/.orchestrator/executor-result`
+> 是否已不存在（`analysis/` 與 `writer-result/` 保留屬正常，見下方注意事項）。
+> 該目錄已消失即代表 Phase 5 已執行完成，**不得僅憑狀態行缺席就判定流程異常**。
 
 > **不得改用 `rm -rf`**：在 Windows 等非 bash shell 下，路徑尾端的反斜線會跳脫結尾引號，指令會在解析階段失敗、根本不會執行。
 
@@ -374,7 +327,7 @@ node -e "const fs=require('fs'),p='{testProjectDir}/.orchestrator/executor-resul
 | Reviewer 回傳後 | `✅ 階段 4 完成（{hook 注入的耗時}）` |
 | **結果呈現後** | 輸出 `### ⏱ 各階段耗時` 表格（見下方格式） |
 | **耗時表之後** | 執行 `report` 指令並**把其 stdout 表格貼進回覆**（⛔ 只跑不貼 = 未完成；見「📊 Token 用量」段） |
-| **Token 表格之後**（真正最後一步）| 執行 Phase 5 後置清理，並輸出其狀態行（⛔ 回覆中沒有這一行 = 流程未完成；見「Phase 5：後置清理」段） |
+| **Token 表格之後**（真正最後一步）| 執行 Phase 5 後置清理，並輸出其狀態行（⛔ 必須輸出；該行缺席時以磁碟狀態判定，不得逕判流程未完成 — 見「Phase 5：後置清理」段） |
 
 ---
 
@@ -384,14 +337,16 @@ node -e "const fs=require('fs'),p='{testProjectDir}/.orchestrator/executor-resul
 
 ### 必呈現的內容
 
-1. **測試檔案連結**：列出 Writer 產出的所有測試檔案路徑（若有獨立測試類別分檔，列出所有檔案路徑與各自負責的方法範圍）。**不需在 chat 中嵌入完整測試程式碼**（大型測試可能超過 300 行，嵌入 chat 會造成雜訊），使用者可透過檔案路徑直接查看
+1. **測試檔案連結**：列出 Writer 產出的測試檔案路徑。**不需在 chat 中嵌入完整測試程式碼**（大型測試可能超過 300 行，嵌入 chat 會造成雜訊），使用者可透過檔案路徑直接查看
 2. **執行結果摘要**：Executor 的 `dotnet test` 是否全數通過、有幾個測試案例
 3. **品質審查摘要**：Reviewer 的 `overallScore` 和關鍵 `issues`
 4. **改善建議**（如果有的話）：Reviewer 的 `missingTestCases` 和 severity=warning 以上的問題
-5. **使用的技術組合**：列出哪些 Skills 被載入使用
+5. **Writer 的技術選擇**：列出 `skillsConsulted`（Writer 實際讀取了哪些 Skill），以及 `deviations`（偏離預設做法的項目與理由）。**`deviations` 為空時也必須明說「未偏離預設做法」**——技術選擇權交還給 Writer 之後，這是使用者判斷它選得對不對的唯一依據
 6. **Executor 修正紀錄**（如果有的話）：Executor 修正了哪些編譯/執行錯誤
 7. **採用摘要**（僅當 Analyzer 回傳 `scenarioSource === "adopted"` 時）：明確呈現「本次採用使用者提供的場景，涵蓋方法：{adoptedMethods}；未涵蓋而排除：{excludedMethods}（本次未納入測試）」。**不得省略排除清單**——這是使用者判斷本次涵蓋範圍是否符合預期的唯一依據
-8. **各階段耗時摘要**：結果呈現結束後，**必須**輸出以下格式的耗時表格（從 hook 注入的耗時資訊中取得各階段時間）
+8. **`.csproj` 變動**：彙整所有 Writer 回傳的 `nugetChanges` 逐筆列出（套件名 + 版本 前→後）。**即使為空也必須明說「`.csproj` 未變動」**——測試專案的套件基線被改動卻未告知，使用者無從察覺；「沒提」與「沒改」不得由使用者自行推斷
+9. **非測試程式碼變更**：若本次流程修改了測試專案以外的任何檔案（`src/` 下的生產程式碼、AppHost 設定等），必須逐一列出檔案路徑、變更摘要與變更原因（如 skill 規則明文要求）。**即使未修改也必須明說「未修改測試專案以外的檔案」**——`src/` 變更比 `.csproj` 更需要使用者知情，「沒提」與「沒改」不得由使用者自行推斷
+10. **各階段耗時摘要**：結果呈現結束後，**必須**輸出以下格式的耗時表格（從 hook 注入的耗時資訊中取得各階段時間）
 
 **結果呈現完畢後，必須緊接著輸出耗時摘要（不可省略）：**
 
@@ -426,6 +381,8 @@ Bash 的 stdout **不會自動顯示給使用者**，必須由你親手複製貼
 4. 只有當指令真的無輸出或失敗（本機未產生 transcript）時，才可略過本段。
 
 > 自我檢查（結束前必問）：**「我是否已把 report 指令的 stdout 表格貼進可見回覆？」** 若否 → 立即補貼，不得結束。
+
+> **表格缺席時的判讀**：Token 表格缺席**不代表流程異常** —— 四階段的成敗一律以 Executor 回報與磁碟狀態為準。缺席只代表本次沒有 token 資料可看；transcript 仍在，使用者可自行執行 `node .claude/scripts/token-usage/token_usage.js report unit` 補取。**不得因表格缺席而重跑整個工作流程。**
 
 - 統計涵蓋 Orchestrator 主執行緒 ＋ 本次所有 `dotnet-testing-*` subagent；input 分純 input／cache 寫入／cache 讀取，另有含快取合計與 output。
 - 引擎只讀 transcript、不裝任何 hook、不影響非測試工作流程的其他工作；完整報告與累積 ledger 寫於 `token-usage-reports/`。詳見 `docs/TOKEN_USAGE_GUIDE.md`。
@@ -537,7 +494,7 @@ node .claude/scripts/token-usage/token_usage.js report unit 2>/dev/null
 | Phase 3 Executor | **循序** | 同專案 `dotnet build` 不可並行，需依序執行每個測試檔案 |
 | Phase 4 Reviewer | **平行** | 每份測試獨立審查，在同一回應中發出多個 Agent tool 呼叫 |
 
-> **`.csproj` 競態收斂（多目標）**：多目標時各類別的主組 Writer 仍可能並行觸及同一 `.csproj`。Phase 3 Executor 為**循序**、且在所有 Writer 之後執行——它會在建置時補齊缺漏套件（CS0246 → 加套件、NU1101 → 移除錯誤套件），作為 `.csproj` 的**最終收斂點**。因此即使並行 Writer 的 `.csproj` 寫入有 lost-update，Executor 仍會修正。Writer 端則透過「分割時只由主組改 `.csproj`」降低競態面。
+> **`.csproj` 競態收斂（多目標）**：多目標時各類別的 Writer 仍可能並行觸及同一 `.csproj`。Phase 3 Executor 為**循序**、且在所有 Writer 之後執行——它會在建置時補齊缺漏套件（CS0246 → 加套件、NU1101 → 移除錯誤套件），作為 `.csproj` 的**最終收斂點**。因此即使並行 Writer 的 `.csproj` 寫入有 lost-update，Executor 仍會修正。
 
 ### 多目標結果彙整
 
@@ -553,5 +510,5 @@ node .claude/scripts/token-usage/token_usage.js report unit 2>/dev/null
 
 1. **交接檔案路徑優先** — 傳遞 `analysisFilePath`、`writerResultFilePath`、`executorResultFilePath` 給 subagent，而非嵌入完整 JSON。Subagent 會在 Step 0 自行讀取交接檔案取得完整資訊
 2. **保持 context 精簡** — 只保留 subagent 回傳的摘要，不展開中間過程
-3. **`methodScenarioCounts` 驅動分割** — 用此欄位判斷是否需要 Writer 分割及如何分組
+3. **`methodScenarioCounts` 供規模判讀** — 用此欄位掌握各方法的場景分佈，供進度顯示與結果彙整使用
 4. **`suggestedTestScenarios` 必須是中文** — Analyzer 產出的建議測試命名必須使用中文三段式格式

@@ -2,11 +2,11 @@
 
 ## 1. 概覽
 
-TUnit 測試 Orchestrator 負責協調 TUnit 框架測試的工作流程，支援新建測試與從 xUnit 遷移兩種情境。
+TUnit 測試 Orchestrator 負責協調 TUnit 框架測試的工作流程，支援新增測試與從 xUnit 遷移兩種情境。
 
 | 項目     | 說明                                       |
 | -------- | ------------------------------------------ |
-| 適用場景 | TUnit 框架測試（新建）、xUnit → TUnit 遷移 |
+| 適用場景 | TUnit 框架測試（新增）、xUnit → TUnit 遷移 |
 | 觸發指令 | `/dotnet-testing-orchestrator-tunit`       |
 | 必要環境 | .NET SDK（不需要 Docker）                  |
 
@@ -72,7 +72,7 @@ Orchestrator 啟動後，首先使用 Glob 檢查測試專案目錄下是否有�
 - 識別建構子依賴（需要哪些 interface / service）
 - 識別所有公開方法（方法名、參數型別、回傳型別）
 - 偵測目標類型（validator / service / repository 等）
-- 進行框架偵測：判斷是新建測試，還是從 xUnit/NUnit 遷移的場景
+- 進行框架偵測：判斷是新增測試，還是從 xUnit/NUnit 遷移的場景
 
 **TUnit 特有的額外判斷：**
 
@@ -96,22 +96,13 @@ Writer 讀取 Analyzer 交接檔案，依據 `requiredSkills` 載入對應的 Sk
 - 前置設定用 `[Before(Test)]`，後置清理用 `[After(Test)]`（不使用 constructor / IDisposable 模式）
 - 斷言一律使用 `await Assert.That(actual).IsXxx(expected)`（非同步，不可省略 `await`）
 
-**Writer 分割決策：**
+**Writer 啟動規則：**
 
-當被測試目標規模較大時，Orchestrator 會將任務分割給多個 Writer 平行執行：
+**一個被測類別固定啟動一個 Writer，產出一個測試檔案。** 不論方法數或情境數多寡，都不拆分。
 
-觸發條件（必須同時滿足所有條件）：
+早期版本會在 `methodCount > 5` 或 `scenarioCount > 20` 時拆為兩個平行 Writer，因平行 Writer 之間無法協調、跨檔寫法必然漂移而移除。
 
-- `methodCount > 5` 或 `scenarioCount > 20`
-- 且 `forbidWriterSplit != true`（Validator 類別永不分割）
-
-分割策略：
-
-1. 將各方法按 scenario 數量由多至少排序
-2. 以貪婪演算法將方法分配至兩組，讓兩組的 scenario 總數盡量均衡
-3. 兩個 Writer **平行**啟動，各自負責一組方法
-
-Validator 類別（CrossField 規則與一般規則必須由同一個 Writer 處理）即使 scenarioCount 再大也永不分割。
+Orchestrator 一律隨 Writer prompt 下達風格指令：例外斷言統一 `.Throw<T>()`、lambda 委派統一 `var act = () => X()`、`nameof` 拋出時接 `.WithParameterName()`、物件比較用 `BeEquivalentTo()`、`FakeTimeProvider` 欄位命名 `_timeProvider`、`using` 排序與不重複宣告 `GlobalUsings` 已涵蓋者。
 
 ### Phase 3 Executor
 

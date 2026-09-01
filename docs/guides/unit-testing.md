@@ -4,7 +4,7 @@
 
 適用場景：任何需要為 .NET 類別產生 xUnit 單元測試的情境，包含純函式計算、有 Mock 依賴的服務類別、FluentValidation 驗證器，以及含時間或檔案系統抽象的類別。
 
-測試技術棧：xUnit 2.9 + NSubstitute + AutoFixture + AwesomeAssertions + Bogus + FakeTimeProvider + MockFileSystem
+測試技術組合：xUnit 2.9 + NSubstitute + AutoFixture + AwesomeAssertions + Bogus + FakeTimeProvider + MockFileSystem
 
 ---
 
@@ -52,7 +52,7 @@ Orchestrator 會依序自動啟動四個 subagent：Analyzer → Writer → Exec
 
 預期 Orchestrator 行為：
 
-- Analyzer 判斷類別無建構子依賴，`requiredTechniques` 只包含基礎技能（`unit-test-fundamentals`、`assertions`）
+- Analyzer 回報類別無建構子依賴；Writer 只讀三項基礎 Skill，不額外取用
 - Writer 不引入 NSubstitute Mock，直接以 `[Fact]` / `[Theory]` 測試純計算邏輯
 - 測試方法命名範例：`CelsiusToFahrenheit_攝氏0度_應回傳華氏32度`
 
@@ -70,7 +70,7 @@ Orchestrator 會依序自動啟動四個 subagent：Analyzer → Writer → Exec
 
 預期 Orchestrator 行為：
 
-- Analyzer 偵測到 `IWeatherService`、`INotificationService` 等介面依賴，`requiredTechniques` 包含 `nsubstitute-mocking`
+- Analyzer 回報 `IWeatherService`、`INotificationService` 等介面依賴（`needsMock: true`）；Writer 據此取用 `nsubstitute-mocking`
 - Writer 使用 `NSubstitute.Substitute.For<IXxx>()` 建立 Mock 物件，並設定 Stub 行為
 - 非同步方法（`async Task`）使用 `await` 正確測試
 
@@ -89,7 +89,7 @@ Orchestrator 會依序自動啟動四個 subagent：Analyzer → Writer → Exec
 
 預期 Orchestrator 行為：
 
-- Analyzer 偵測到複雜輸入模型，`requiredTechniques` 包含 `autofixture-basics` 與 `bogus-faker`
+- Analyzer 回報複雜輸入模型（`complexModelAnalysis`）；Writer 據此取用 `autofixture-basics`，需要擬真欄位值時再取用 `bogus-fake-data`
 - Writer 使用 `new Fixture().OmitAutoProperties()` 或設定 `OmitOnRecursionBehavior` 處理循環參考
 - 擬真假資料（如員工姓名、部門名稱）透過 `Bogus.Faker` 產生
 
@@ -107,7 +107,7 @@ Orchestrator 會依序自動啟動四個 subagent：Analyzer → Writer → Exec
 
 預期 Orchestrator 行為：
 
-- Analyzer 偵測到 `TimeProvider` 建構子依賴，`requiredTechniques` 包含 `datetime-testing-timeprovider`
+- Analyzer 回報 `TimeProvider` 依賴（`specialHandling: "datetime"`）；Writer 據此取用 `datetime-testing-timeprovider`
 - Writer 使用 `Microsoft.Extensions.Time.Testing.FakeTimeProvider`，在測試中凍結或快轉時間
 - 測試方法命名範例：`IsSubscriptionActive_訂閱期間內_應回傳true`、`GetRemainingDays_訂閱已過期_應回傳零`
 
@@ -125,7 +125,7 @@ Orchestrator 會依序自動啟動四個 subagent：Analyzer → Writer → Exec
 
 預期 Orchestrator 行為：
 
-- Analyzer 偵測到 `IFileSystem` 建構子依賴，`requiredTechniques` 包含 `filesystem-testing-abstractions`
+- Analyzer 回報 `IFileSystem` 依賴（`specialHandling: "filesystem"`）；Writer 據此取用 `filesystem-testing-abstractions`
 - Writer 使用 `System.IO.Abstractions.TestingHelpers.MockFileSystem` 模擬檔案系統，在記憶體中建立虛擬檔案與目錄
 - 測試涵蓋檔案存在/不存在、讀寫成功/失敗、路徑異常等情境
 
@@ -145,7 +145,7 @@ Orchestrator 會依序自動啟動四個 subagent：Analyzer → Writer → Exec
 
 - Analyzer 偵測到繼承 `AbstractValidator<Order>`，設定 `targetType: "validator"`
 - Writer 使用 FluentValidation TestHelper 模式：`validator.TestValidate(model)` 搭配 `ShouldHaveValidationErrorFor()` / `ShouldNotHaveValidationErrorFor()`
-- Validator 類別不會被分割為多個 Writer（永遠使用單一 Writer 以確保驗證規則一致性）
+- Writer 另讀 `.claude/agents/rules/unit-writer-validator.md`（`targetType` 為 `validator` 時條件載入），其中規定時間相依 base object 的建構方式與「不得新增 FluentValidation 套件參考」
 
 ---
 
@@ -231,17 +231,17 @@ npx skills install
 
 ---
 
-### 2. Writer 沒有觸發分割策略
+### 2. 產出的測試檔案只有一個
 
-**說明**：當目標類別的公開方法數量超過 5 個，或建議測試情境數量超過 20 個時，Orchestrator 應自動將任務分割為兩個平行 Writer subagent（各負責不同方法群組）。
+**這是預期行為，不是問題。** 一個被測類別固定啟動一個 Writer、產出一個 `{ClassName}Tests.cs`，不論方法數或情境數多寡。
 
-**若沒有分割**，可能原因是 Analyzer 分析結果中 `methodScenarioCounts` 數值偏低，未達觸發門檻。可嘗試在指令中補充說明，提示 Orchestrator 該類別的複雜度：
+早期版本會在方法數 > 5 或情境數 > 20 時拆為兩個平行 Writer。實測顯示平行 Writer 之間無法協調預設值與寫法，跨檔案必然漂移，且每次漂移的面向都不同：補一條規則就換一個地方漂。改為單一檔案後此類問題整體消失。
+
+若覺得測試涵蓋不足，正確的做法是在指令中說明期望涵蓋的範圍：
 
 ```text
 說明：OrderProcessingService 包含 8 個公開方法，請完整涵蓋所有方法的測試情境
 ```
-
-> 例外：`targetType` 為 `"validator"` 的類別（FluentValidation 驗證器）永遠使用單一 Writer，不會分割。
 
 ---
 
@@ -311,11 +311,10 @@ Analyzer subagent 接收 Orchestrator 委派後，執行以下工作：
   - `I*` 介面 → 需要 NSubstitute Mock
   - `TimeProvider` → 特殊處理，使用 FakeTimeProvider
   - `IFileSystem` → 特殊處理，使用 MockFileSystem
-- 評估需要載入哪些 Agent Skills（`autofixture-basics`、`nsubstitute-mocking`、`datetime-testing-timeprovider` 等）
-- 估算各方法的測試情境數量（`methodScenarioCounts`），決定是否需要分割 Writer
+- 估算各方法的測試情境數量（`methodScenarioCounts`），供進度顯示與結果彙整使用
 - 產出結構化 JSON 分析報告，寫入 `.orchestrator/analysis/{ClassName}.analysis.json`
 
-Analyzer 分析完成後，將摘要回傳給 Orchestrator（方法數、情境數、技術清單），Orchestrator 驗證交接檔案存在後進入 Phase 2。
+Analyzer **只描述客觀事實**，要用哪些 Skill 由 Writer 讀完原始碼後自行判斷。分析完成後將摘要回傳給 Orchestrator（方法數、情境數），Orchestrator 驗證交接檔案存在後進入 Phase 2。
 
 ---
 
@@ -323,17 +322,15 @@ Analyzer 分析完成後，將摘要回傳給 Orchestrator（方法數、情境�
 
 Writer subagent 接收 Orchestrator 委派後，執行以下工作：
 
-- 讀取 Analyzer 交接的 JSON 分析報告，取得 `requiredTechniques`、`suggestedTestScenarios` 等資訊
-- 依 `requiredTechniques` 載入對應的 Agent Skills（SKILL.md）
+- 讀取 Analyzer 交接的 JSON 分析報告，取得 `suggestedTestScenarios`、`dependencies`、`targetType`、`existingTestInfrastructure` 等客觀事實
+- 預載三項基礎 Skill（`unit-test-fundamentals`、`test-naming-conventions`、`xunit-project-setup`），其餘 16 個依判斷自目錄選取；實際讀了哪些記於 `writer-result.skillsConsulted`
 - 掃描測試專案中既有的輔助類別（`AutoDataWithCustomization`、`FakeTimeProviderExtensions` 等），優先重用
 - 按照中文三段式命名慣例產生測試方法名稱：`方法名_情境描述_預期結果`
 - 所有斷言使用 AwesomeAssertions（`.Should()` 系列），禁止使用 xUnit 原生 `Assert.*`
 
-**分割策略**：當 `methodCount > 5` 或 `scenarioCount > 20` 時，Orchestrator 同時啟動兩個 Writer subagent 平行撰寫：
+**一個被測類別一個 Writer**：不論方法數或情境數多寡，固定產出一個 `{ClassName}Tests.cs`。
 
-- Writer 1（主要組）：負責情境數較多的方法群組，輸出至 `{ClassName}Tests.cs`
-- Writer 2（分割組）：負責其餘方法群組，輸出至 `{ClassName}_{代表方法名}Tests.cs`
-- 兩個 Writer 接收相同的風格統一指令，確保產出的斷言風格、using 排列、初始化方式完全一致
+**規則分層**：契約層（AAA 標記、中文三段式命名、AwesomeAssertions、`#region` 分組、路徑跨平台）不可偏離；其餘為預設做法，Writer 判斷不合用時可偏離，但必須在 `writer-result.deviations` 記錄理由，由 Reviewer 逐筆審查。理由成立不算缺失，未記錄才算。
 
 ---
 

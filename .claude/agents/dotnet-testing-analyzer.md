@@ -144,9 +144,35 @@ permissionMode: bypassPermissions
    展開邏輯：
    1. 讀取巢狀 Validator 的建構子，逐行掃描所有 `RuleFor` 呼叫
    2. 每個 `RuleFor` 的每條驗證規則（如 NotEmpty、Length、GreaterThan、LessThanOrEqualTo）各產出一個對應的 suggestedTestScenario
-   3. 場景命名格式：`Validate_Items中某項目{PropertyName}{違規描述}_應回傳驗證失敗並含錯誤訊息`（每條規則各一個場景，禁止合併）
+   3. 場景命名格式：`Validate_項目{中文屬性描述}{違規描述}_應驗證失敗`（每條規則各一個場景，禁止合併）
+      - **屬性名必須譯為中文**，不得直接嵌入英文識別字：`ProductName` → 產品名稱、
+        `Quantity` → 數量、`UnitPrice` → 單價、`ProductId` → 產品編號、`Items` → 項目
+      - 範例：`Validate_項目產品名稱為空_應驗證失敗`、`Validate_項目數量超過1000_應驗證失敗`
 
    > **禁止遺漏**：巢狀 Validator 中的每個屬性的每條規則都必須在 `suggestedTestScenarios` 中有對應項目。產出後自我比對巢狀 Validator 原始碼，確認無遺漏。
+
+6. **條件式規則場景展開（強制）**：`crossFieldRules[]`（`When`／`Unless`）與 `customMethods[]`（`Must()`）的每一條，**必須各產出「失敗」與「成功」兩個場景**。
+
+   **為什麼只有這兩類要明列成功分支**：一般屬性規則（`NotEmpty`、`Length`、`GreaterThan` 等）的成功分支，由「所有欄位合法」那個場景集體涵蓋。但**條件式規則不然** —— 合法基底物件通常讓條件不成立（例如 `CreateValid{Type}()` 預設 `ProcessedAt = null`，使 `When(x => x.ProcessedAt.HasValue)` 底下的規則從未被觸發），該規則的成功路徑於是從未被執行。缺了成功場景，測試看起來全綠，實際上那條規則只驗過一半。
+
+   展開邏輯：
+
+   1. 逐條掃描 `crossFieldRules[]` 與 `customMethods[]`
+   2. 每條產出**兩個**場景：
+      - **失敗分支**：條件成立且違反規則
+      - **成功分支**：條件成立且符合規則
+   3. 當 `When`／`Unless` 的條件本身有「不成立」的語意分支時（如 `When(x => x.Status == Completed)`），**額外產出一個「條件不成立應通過」場景**
+   4. 命名同樣適用中文三段式與英文識別字禁令
+
+   範例（`RuleFor(x => x.ProcessedAt).NotNull().When(x => x.Status == OrderStatus.Completed)`）：
+
+   ```text
+   Validate_狀態為完成且處理時間為null_應驗證失敗     ← 失敗分支
+   Validate_狀態為完成且有處理時間_應驗證成功         ← 成功分支
+   Validate_狀態非完成處理時間為null_應驗證成功       ← 條件不成立
+   ```
+
+   > **禁止只列失敗分支**：產出後自我比對 —— `crossFieldRules[]` 與 `customMethods[]` 的條目數 × 2 應為這兩類場景數的下限。若少於此數，代表有規則只驗了一半。
 
 > **重要**：Validator 類型不需要走 Step 3 的方法簽章分析（因為 Validator 的邏輯在建構子規則中，不在公開方法中）。但仍需執行 Step 2（建構子依賴分析）來識別 `TimeProvider` 等注入。
 
@@ -256,88 +282,14 @@ permissionMode: bypassPermissions
 
 ### Step 5：掃描既有測試專案的基礎設施
 
-在產生 `requiredTechniques` 之前，你**必須**先掃描測試專案中已存在的測試檔案和基礎設施：
+你**必須**掃描測試專案中已存在的測試檔案和基礎設施：
 
 1. 使用 `Glob` 查看測試專案的目錄結構
 2. 使用 `Grep` 搜尋 `AutoDataWithCustomization`、`InlineAutoDataWithCustomization`、`FakeTimeProviderExtensions`、`ITestOutputHelper` 等關鍵字
-3. 如果找到既有的 AutoFixture 自訂 Attribute 或 Extension Method，**必須**將對應技術加入 `requiredTechniques`
+3. 把找到的基礎設施如實記錄到 `existingTestInfrastructure`，供 Writer 判讀後沿用
 4. 使用 `Read` 讀取至少一個同專案下已存在的測試檔案，了解既有的測試 pattern
 
-**規則**：如果測試專案中已存在以下基礎設施，對應的技術**強制加入** `requiredTechniques`：
-
-| 既有基礎設施 | 強制加入的技術 |
-|-------------|---------------|
-| `AutoDataWithCustomizationAttribute` | `autodata-xunit-integration`、`autofixture-basics`、`autofixture-customization` |
-| `InlineAutoDataWithCustomizationAttribute` | `autodata-xunit-integration` |
-| `FakeTimeProviderExtensions.SetLocalNow()` | `datetime-testing-timeprovider` |
-| `AutoFixture.AutoNSubstitute` 套件 | `autofixture-nsubstitute-integration` |
-| `ITestOutputHelper` 使用 | `test-output-logging` |
-
-### Step 6：產生 `requiredTechniques` 清單
-
-根據分析結果**和 Step 5 的掃描結果**，**嚴格從以下對照表中選擇**需要的技術：
-
-#### 基礎技術
-
-| 條件 | 技術識別碼 |
-|------|-----------|
-| 任何被測試目標 | `unit-test-fundamentals` |
-| 任何被測試目標 | `test-naming-conventions` |
-| 測試專案尚無任何 .cs 測試檔案（Step 5 掃描結果為空） | `xunit-project-setup` |
-
-#### 依賴相關
-
-| 條件 | 技術識別碼 |
-|------|-----------|
-| 有 `I*` 介面依賴需要 Mock | `nsubstitute-mocking` |
-| 有 2+ 個 Mock 依賴 | `autofixture-nsubstitute-integration` |
-| 需要自動生成測試資料 | `autofixture-basics` |
-| 需要擬真欄位值（Email、Phone 等） | `bogus-fake-data` |
-| 複雜資料需要 Builder Pattern 組裝 | `test-data-builder-pattern` |
-| `complexModelAnalysis.inputs[]` 有 4+ 屬性 Model 且 `usedByMethods` 含 2+ 方法 | `test-data-builder-pattern` |
-| AutoFixture + Bogus 整合 | `autofixture-bogus-integration` |
-| 需要 AutoData 參數化測試 | `autodata-xunit-integration` |
-| AutoFixture 需自定義規則 | `autofixture-customization` |
-
-#### 斷言相關
-
-| 條件 | 技術識別碼 |
-|------|-----------|
-| 任何斷言場景 | `awesome-assertions` |
-| 回傳複雜物件需要比對 | `complex-object-comparison` |
-| `complexModelAnalysis.outputs[]` 有 3+ 屬性的回傳型別 | `complex-object-comparison` |
-| 有 `IValidator<T>` 依賴 | `fluentvalidation-testing` |
-| `targetType === "validator"`（Validator 類別本身） | `fluentvalidation-testing` |
-
-#### 特殊場景
-
-| 條件 | 技術識別碼 |
-|------|-----------|
-| 有 `TimeProvider` 依賴 / 日期邏輯 | `datetime-testing-timeprovider` |
-| 有 `IFileSystem` 依賴 / 檔案操作 | `filesystem-testing-abstractions` |
-| 需要測試 private/internal 方法 | `private-internal-testing` |
-
-#### 輔助
-
-| 條件 | 技術識別碼 |
-|------|-----------|
-| 需要在測試中輸出診斷資訊 | `test-output-logging` |
-| 有程式碼覆蓋率需求 | `code-coverage-analysis` |
-
-### Step 6.1：產生 `skillMap.reviewer` 清單
-
-根據已確定的 `requiredTechniques` 內容，計算 Reviewer agent 需要的 Skill 清單，讓 Reviewer 可以**直接並行載入**，無需重新推導。`requiredTechniques` 與 `skillMap.reviewer` 輸出的都是**識別碼**（Writer / Reviewer 依識別碼對應的 `.agents/skills/<name>/SKILL.md` 路徑載入），Analyzer **本身不載入任何技術型 Skill**：
-
-| `skillMap.reviewer` 欄位值 | 條件 |
-|---------------------------|------|
-| `test-naming-conventions` | **固定包含**（審查命名規範） |
-| `awesome-assertions` | **固定包含**（審查斷言品質） |
-| `unit-test-fundamentals` | **固定包含**（審查測試結構） |
-| `nsubstitute-mocking` | 若 `requiredTechniques` 含 `nsubstitute-mocking` |
-| `complex-object-comparison` | 若 `requiredTechniques` 含 `complex-object-comparison` |
-| `code-coverage-analysis` | 若 `requiredTechniques` 含 `code-coverage-analysis` |
-
----
+**原則**：這一步只記錄事實，不做技術指派。既有基礎設施的存在與否會影響 Writer 該沿用還是新建，但由 Writer 讀取原始碼後自行判斷 —— Analyzer 不代為決定。
 
 ## 回傳格式
 
@@ -387,24 +339,6 @@ permissionMode: bypassPermissions
     "perMethod": {
       "ProcessOrder": ["GetLocalNow", "GetUtcNow"]
     }
-  },
-  "requiredTechniques": [
-    "unit-test-fundamentals",
-    "test-naming-conventions",
-    "xunit-project-setup",
-    "nsubstitute-mocking",
-    "autofixture-basics",
-    "awesome-assertions",
-    "datetime-testing-timeprovider",
-    "autodata-xunit-integration"
-  ],
-  "skillMap": {
-    "reviewer": [
-      "test-naming-conventions",
-      "awesome-assertions",
-      "unit-test-fundamentals",
-      "nsubstitute-mocking"
-    ]
   },
   "suggestedTestScenarios": [
     "ProcessOrder_訂單有效且付款成功_應回傳成功結果",
@@ -457,7 +391,7 @@ permissionMode: bypassPermissions
 > - 集合屬性（`isCollection: true`）：提供至少一個元素的合法集合描述（如 `"[at least 1 valid item]"`）
 > - 跨欄位規則（`crossFieldRules[]`）：不列入 `validBaseObjectHint`，由 Writer 自行依 `condition` 設定
 >
-> **用途**：Writer 以此為基礎建立 `CreateValid{ModelType}()` helper，確保多個 Writer 並行時各自的 base object 均能通過所有驗證規則。
+> **用途**：Writer 以此為基礎建立 `CreateValid{ModelType}()` helper，確保 base object 能通過所有驗證規則。
 
 > **`legacyInfo` 結構**（當 `targetType === "legacy"` 時）：包含 `staticDependencies[]`（每項 `{ className, methodName, filePath }`）、`hardcodedData`（靜態類別中寫死的資料摘要，如 `"3 users: ID 1 Alice $350.50, ID 2 Bob $75, ID 3 Carol $0"`）、`directIoOperations[]`（如 `"File.WriteAllText"`, `"DateTime.Now"` 等）、`testabilityIssues[]`（可測試性問題描述清單）、`productionRefactorSuggestion`（僅在偵測到「直接 File.IO + 硬編絕對路徑 + 無 IFileSystem」時輸出，結構 `{ issue, location, hardcodedPath, recommendation }`）。**此資訊讓 Writer 知道只能用 Characterization Test 模式，命名必須基於靜態資料的實際值；`productionRefactorSuggestion` 供 Reviewer 顯著呈現為 opt-in 建議。**
 
@@ -481,7 +415,6 @@ permissionMode: bypassPermissions
 3. **`methodCount`**：等於 `methodsToTest` 陣列的長度（Validator 類型：等於 rules + crossFieldRules 數量，不含 nestedValidator）
 4. 確認無任何欄位為 `undefined`（特別是 `projectContext.suggestedTestFilePath`、`projectContext.targetFramework`）
 5. **Validator 類型額外驗證**：
-   - 精簡摘要中包含 `"forbidWriterSplit": true`
    - `validatorInfo.validBaseObjectHint` 不為空，且每個有約束的屬性都有對應值
    - `validBaseObjectHint` 中的每個屬性值確實滿足 `rules[]` 中對應的 `validations[]`（例如：Length(2,50) → 值長度在 2-50 之間）
 
@@ -529,26 +462,21 @@ permissionMode: bypassPermissions
     "ValidateOrder": 4,
     "CancelOrder": 3
   },
-  "requiredTechniques": ["unit-test-fundamentals", "nsubstitute-mocking", "..."],
-  "skillMap": { "reviewer": ["test-naming-conventions", "awesome-assertions", "unit-test-fundamentals"] },
   "analysisFilePath": "tests/MyProject.Core.Tests/.orchestrator/analysis/OrderProcessingService.analysis.json",
 ```
 
 > **採用模式時精簡摘要額外欄位**：`"scenarioSource": "adopted"`、`"adoptedMethods": [...]`、`"excludedMethods": [...]`，供 Orchestrator 呈現採用摘要（5.1-D）。`generated` 模式不輸出這三個欄位。
 
-> **`targetType === "validator"` 時的精簡摘要**：必須在頂層加入 `"forbidWriterSplit": true`：
+> **`targetType === "validator"` 時的精簡摘要**：
 
 ```json
 {
   "status": "completed",
   "className": "OrderValidator",
   "targetType": "validator",
-  "forbidWriterSplit": true,
   "methodCount": 8,
   "scenarioCount": 32,
   "methodScenarioCounts": { "CustomerId": 3, "Items": 5, "CrossField_ProcessedAt_CreatedAt": 4, "...": "..." },
-  "requiredTechniques": ["fluentvalidation-testing", "..."],
-  "skillMap": { "reviewer": ["..."] },
   "analysisFilePath": "tests/MyProject.Core.Tests/.orchestrator/analysis/OrderValidator.analysis.json",
   "projectContext": {
     "targetFramework": "net9.0",
@@ -559,21 +487,25 @@ permissionMode: bypassPermissions
 }
 ```
 
-> **`methodScenarioCounts`**：供 Orchestrator 判斷是否需要 Writer 分割（methods>5 / scenarios>20）及如何分組。當 `targetType === "validator"` 時，此欄位仍正常產出，且精簡摘要中必須包含 `"forbidWriterSplit": true`，禁止 Orchestrator 拆分 Validator 測試類別（無論 scenarioCount 多大）。
+> **`methodScenarioCounts`**：供 Orchestrator 掌握各方法的場景分佈，用於進度顯示與結果彙整。
 
 ---
 
 ## 重要原則
 
 1. **只分析，不寫程式碼** — 你的產出是交接檔案 + 精簡摘要回傳
-2. **`requiredTechniques` 必須精確** — 只列出真正需要的技術，不要過度推薦
+2. **只描述，不指派** — 你的職責是產出客觀事實（依賴、方法、既有基礎設施、場景），由 Writer 決定要用哪些技術。不要在報告中夾帶技術選型指令。
 3. **`suggestedTestScenarios` 必須使用中文三段式命名** — 格式為 `方法_情境_預期`，使用中文描述情境與預期結果。**精簡原則：每段最多 6 個中文字，以最短能傳達語義的詞彙表達。**
+   - **情境與預期段不得嵌入英文屬性名、參數名或欄位名**（如 `ProductName`、`timeProvider`、`Items`、`CustomerId`）。需指涉時一律譯為中文（產品名稱、時間提供者、項目、客戶編號）。
+   - **白名單（得保留原文）**：程式碼中的**值與型別** —— 例外型別名（`應拋出ArgumentNullException`）、列舉值（`狀態非Active`、`狀態非OnLoan`）、語言字面值（`為null`、`應為True`、`應回傳false`）、型別成員值（`應回傳TimeSpanZero`）。中文化會失去與程式碼的對應，故不視為違反。
+   - **分界原則**：程式碼中的**值與型別**保留原文，**識別字**（參數名、屬性名、欄位名）必須譯為中文。
+   - 此規則對**所有** `targetType` 一律適用，專用分析流程（validator / legacy）的命名範本亦不得例外。
    - 情境詞彙：`有效`、`無效`、`為null`、`空`、`超限`
    - 預期詞彙：`應回傳`、`應拋出`、`應為`、`應不呼叫`
    - 範例：`ProcessOrder_訂單有效_應回傳成功`、`ProcessOrder_訂單為null_應拋出例外`
    - **例外**：`scenarioSource === "adopted"` 時，`≤6 字` 限制不適用——採用進來的場景名稱（`scenarioSpecs[].name`）原樣保留，不壓縮使用者設計的描述性長命名。此限制僅約束 Analyzer **自行生成**的場景。
 4. **介面檔案路徑要正確** — 使用 `Grep` 確認實際路徑
-5. **沿用既有 pattern** — 如果測試專案已有 AutoFixture 自訂 Attribute 或基礎設施，必須在 `requiredTechniques` 中反映，確保 Writer 沿用而不重新發明
-6. **目標類型決定分析流程** — `targetType === "validator"` 時走 Step 1.5 的 Validator 專用分析流程，跳過 Step 3（方法簽章分析），`requiredTechniques` 自動包含 `fluentvalidation-testing`；`targetType === "legacy"` 時走 Step 1.5 的 Legacy Code 專用分析流程，`suggestedTestScenarios` 命名必須基於靜態資料的實際值（Characterization Test）
+5. **沿用既有 pattern** — 如果測試專案已有 AutoFixture 自訂 Attribute 或基礎設施，必須在 `existingTestInfrastructure` 中如實記錄，Writer 才有依據沿用而不重新發明
+6. **目標類型決定分析流程** — `targetType === "validator"` 時走 Step 1.5 的 Validator 專用分析流程，跳過 Step 3（方法簽章分析）；`targetType === "legacy"` 時走 Step 1.5 的 Legacy Code 專用分析流程，`suggestedTestScenarios` 命名必須基於靜態資料的實際值（Characterization Test）
 7. **Legacy Code 場景命名** — 當 `targetType === "legacy"` 時，`suggestedTestScenarios` 中的每個測試命名**必須反映靜態資料的實際值和行為**。禁止產出「理想化邊界條件」的命名（如「總消費超過500_應回傳true」但靜態資料中無此使用者）。每個場景命名必須與 Assert 斷言一致。
 8. **採用模式不取代技術分析** — `scenarioSource === "adopted"` 只改變「場景從哪來、涵蓋哪些方法」，不減省 Step 2（依賴分析）、Step 3.1/3.2/3.3（IFileSystem／TimeProvider／Complex Model 深度分析）、Step 5（既有基礎設施掃描）。採用的場景提供的是「測什麼、期望什麼」，實際的依賴、回傳型別、行為細節仍由技術分析與下游 Writer 讀原始碼取得——採用不是省略分析的理由。

@@ -58,7 +58,7 @@ cd dotnet-testing-agent-orchestration-claude
 npx skills install dotnet-testing-agent-skills
 ```
 
-安裝完成後，Skills 會安裝到 Claude Code 的用戶 Skills 目錄，供所有使用 Claude Code 的專案共用。
+安裝完成後，Skills 會安裝到 Claude Code 的使用者 Skills 目錄，供所有使用 Claude Code 的專案共用。
 
 **驗證安裝**：在 Claude Code 對話中輸入 `/`，確認清單中可看到 `dotnet-testing-autofixture-basics`、`dotnet-testing-nsubstitute-mocking` 等 Skills 已可用。
 
@@ -158,7 +158,7 @@ node .claude/hooks/install-hooks.js
 腳本會自動完成以下動作：
 
 1. 複製 hook 腳本到 `.claude/hooks/`（`dotnet-testing-agent-timer-pre.sh`、`dotnet-testing-agent-timer-post.sh`）
-2. 合併 hooks 配置到 `.claude/settings.json`（不覆蓋既有設定，冪等設計）
+2. 合併 hooks 設定到 `.claude/settings.json`（不覆寫既有設定，冪等設計）
 
 **驗證 Hook 安裝：**
 
@@ -224,7 +224,7 @@ npx skills install dotnet-testing-agent-skills
 
 ### 問題 3：Docker 未啟動（整合測試 / Aspire 測試）
 
-**症狀：** 執行 Integration 或 Aspire 測試時，Testcontainers 報錯「Docker is not running」或 container 無法啟動。
+**症狀：** 執行 Integration 或 Aspire 測試時，Testcontainers 回報錯誤「Docker is not running」或 container 無法啟動。
 
 **可能原因：** Docker Desktop 未執行。
 
@@ -240,7 +240,7 @@ docker ps
 
 ### 問題 4：Aspire workload 未安裝
 
-**症狀：** Aspire 測試專案無法建置，`dotnet build` 報錯找不到 Aspire 相關套件或 workload。
+**症狀：** Aspire 測試專案無法建置，`dotnet build` 回報找不到 Aspire 相關套件或 workload。
 
 **解法：**
 
@@ -288,4 +288,4 @@ dotnet --list-sdks
 node .claude/hooks/install-hooks.js
 ```
 
-執行後確認 `.claude/settings.json` 包含完整的 `PreToolUse` 與 `PostToolUse` hooks 設定。若 `settings.json` 已有其他設定，腳本只會合併 `hooks` 區段，不會覆蓋既有設定。
+執行後確認 `.claude/settings.json` 包含完整的 `PreToolUse` 與 `PostToolUse` hooks 設定。若 `settings.json` 已有其他設定，腳本只會合併 `hooks` 區段，不會覆寫既有設定。

@@ -111,6 +111,7 @@ Agent(subagent_type="dotnet-testing-advanced-tunit-reviewer", prompt="...")
 - ❓ 使用者有指定版本變體（Net8/Net10）但沒給檔案路徑嗎？→ **先用 `Grep` 找到目標檔案路徑，再啟動 Analyzer**
 - ❓ 我是否正在使用 Bash 來呼叫 claude？→ **停止，使用 Agent tool**
 
+- ❓ 我已貼出耗時表、正要進入 Phase 5 或輸出收尾提示？→ **停止，Token 表格必須先貼**（⛔ 只跑指令不貼 = 未完成）
 - ❓ 我已貼出 Token 表格、正準備結束回覆？→ **停止，還有 Phase 5 後置清理，且必須輸出其狀態行**
 
 **在收到每個 subagent 的回傳結果之前，你不得採取任何程式碼相關行動。**
@@ -121,7 +122,7 @@ Agent(subagent_type="dotnet-testing-advanced-tunit-reviewer", prompt="...")
 
 > ⚠️ **不需要在 subagent prompt 中嵌入完整分析報告 JSON、被測類別路徑、dependency 清單、requiredSkills 完整陣列、suggestedTestScenarios、existingTestInfrastructure、tunitFeatureRequirements 等內容**。每個 subagent 已有 Step 0 讀取交接檔案的能力，可自行取得所有資訊。
 >
-> Orchestrator prompt 只需傳：**交接檔案路徑 + 摘要數字**（methodCount、scenarioCount、testCount 等）+ 必要的控制參數（風格統一指令、modification request 等）。
+> Orchestrator prompt 只需傳：**交接檔案路徑 + 摘要數字**（methodCount、scenarioCount、testCount 等）+ 必要的控制參數（風格指令、modification request 等）。
 
 ---
 
@@ -183,30 +184,23 @@ analysisOutputPath: tests/MyProject.Core.Tests/.orchestrator/analysis/ProductSer
 
 將分析結果交給 **dotnet-testing-advanced-tunit-writer** subagent 撰寫測試。
 
-#### Writer 分割決策
+#### Writer 啟動規則
 
-依據 Analyzer 摘要判斷是否啟動多個 Writer：
+**一個被測類別固定啟動一個 Writer，產出一個測試檔案。** 不論方法數或場景數多寡，都不拆分。
 
-**觸發條件（必須同時滿足以下全部條件才觸發分割）**：
-- `methodCount > 5` 或 `scenarioCount > 20`
-- **且** `forbidWriterSplit != true`（Validator 類別永不分割）
-
-**Validator 類別永不分割**：當 `targetType === "validator"` 或 `forbidWriterSplit === true` 時，無論 scenarioCount 多大，都使用單一 Writer。CrossField 規則與一般規則必須由同一個 Writer 處理，防止重複測試。
-
-**分割策略（greedy 分組）**：
-1. 將 `methodScenarioCounts` 按 scenario 數量由多至少排序
-2. 貪婪地將方法分配至兩組，讓兩組的 scenario 總數盡量均衡
-3. Writer 1 負責第一組方法，Writer 2 負責第二組方法
-4. 兩個 Writer **平行**啟動（單一 Agent tool 呼叫 message）
-
-**多 Writer 風格統一指令**（分割時加入每個 Writer prompt）：
-```
-風格統一指令（多 Writer 分割執行）：
+**風格指令**（一律加入 Writer prompt）：
+```text
+風格指令：
 - 例外斷言：統一使用 .Throw<T>()，禁止使用 .ThrowExactly<T>()
-- lambda 委派：統一使用 var act = () =>，禁止使用 Action act = () =>
+- lambda 委派：統一使用 var act = () => X()，禁止使用 Action act = () =>，
+  亦禁止 var act = async () => await X() 的 async 包裝；
+  非同步一律以 await act.Should().ThrowAsync<T>() 消費
+- 例外斷言參數名：production 以 nameof(x) 拋出時，一律接 .WithParameterName("x")
 - 物件比較：統一使用 BeEquivalentTo()
 - FakeTimeProvider 欄位命名：統一使用 _timeProvider
 - using 排列順序：AwesomeAssertions → AutoFixture → TimeProvider → NSubstitute → 介面 → Model → Service
+- using 不得重複：檔內 using 不得重複宣告 GlobalUsings.cs 已涵蓋的命名空間
+- 被測類別建構子有 ?? throw new ArgumentNullException 時，必須撰寫對應的 null-guard 測試
 ```
 
 **傳給 Writer 的 prompt（依照 Writer 的輸入契約）：**
@@ -224,7 +218,7 @@ analysisFilePath: {analysisFilePath}
 被測試目標的檔案路徑: {filePath}
 測試檔案的預期輸出路徑: {outputPath}
 ```
-分割模式時額外加入：負責的方法清單、測試類別名稱、風格統一指令（見上方）。
+額外加入上方的風格指令。
 
 **等候 Writer 回傳精簡摘要**：`testFilePaths`、`testCount`、`skillsLoaded`、`writerResultFilePath`
 
@@ -286,7 +280,12 @@ executorResultFilePath: {executorResultFilePath}
 
 ⛔ **這一行必須依 Executor 的實際回傳決定，不得憑印象或推定寫入。** 沒收到回傳就寫「完成」，等於流程沒做卻回報成功——假數據比缺失更難察覺。
 
-⛔ **回覆中沒有這一行 = 流程未完成。**
+⛔ **這一行必須輸出，且必須是整段回覆的最後一行。**
+
+> **該行缺席時的判讀（給閱讀回覆的人，非給本 Orchestrator）**：狀態行未出現在可見回覆
+> **不等於**流程未完成。環境彈窗、終端截斷、複製遺漏都可能讓它從可見回覆消失。
+> 缺席時一律**以磁碟為準**再判定：檢查 `{testProjectDir}/.orchestrator/` 是否已整個消失。
+> 目錄已消失即代表 Phase 5 已執行完成，**不得僅憑狀態行缺席就判定流程異常**。
 
 ---
 
@@ -317,7 +316,7 @@ executorResultFilePath: {executorResultFilePath}
 | Reviewer 回傳後 | `✅ 階段 4 完成（{hook 注入的耗時}）` |
 | **結果呈現後** | 輸出 `### ⏱ 各階段耗時` 表格（見下方格式） |
 | **耗時表之後** | 執行 `report` 指令並**把其 stdout 表格貼進回覆**（⛔ 只跑不貼 = 未完成；見「📊 Token 用量」段） |
-| **Token 表格之後**（真正最後一步）| 執行 Phase 5 後置清理，並輸出其狀態行（⛔ 回覆中沒有這一行 = 流程未完成；見「Phase 5：後置清理」段） |
+| **Token 表格之後**（真正最後一步）| 執行 Phase 5 後置清理，並輸出其狀態行（⛔ 必須輸出；該行缺席時以磁碟狀態判定，不得逕判流程未完成 — 見「Phase 5：後置清理」段） |
 
 ---
 
@@ -333,7 +332,9 @@ executorResultFilePath: {executorResultFilePath}
 4. **改善建議**（如果有的話）：Reviewer 的遺漏測試案例和嚴重問題
 5. **使用的 Skills 組合**：列出 Writer 載入了哪些 Skills
 6. **Executor 修正紀錄**（如果有的話）
-7. **各階段耗時摘要**：結果呈現結束後，**必須**輸出以下格式的耗時表格（從 hook 注入的耗時資訊中取得各階段時間）
+7. **`.csproj` 變動**：彙整所有 Writer 回傳的 `nugetChanges` 逐筆列出（套件名 + 版本 前→後）。**即使為空也必須明說「`.csproj` 未變動」**——測試專案的套件基線被改動卻未告知，使用者無從察覺；「沒提」與「沒改」不得由使用者自行推斷
+8. **非測試程式碼變更**：若本次流程修改了測試專案以外的任何檔案（`src/` 下的生產程式碼、AppHost 設定等），必須逐一列出檔案路徑、變更摘要與變更原因（如 skill 規則明文要求）。**即使未修改也必須明說「未修改測試專案以外的檔案」**——`src/` 變更比 `.csproj` 更需要使用者知情，「沒提」與「沒改」不得由使用者自行推斷
+9. **各階段耗時摘要**：結果呈現結束後，**必須**輸出以下格式的耗時表格（從 hook 注入的耗時資訊中取得各階段時間）
 
 **結果呈現完畢後，必須緊接著輸出耗時摘要（不可省略）：**
 
@@ -368,6 +369,8 @@ Bash 的 stdout **不會自動顯示給使用者**，必須由你親手複製貼
 4. 只有當指令真的無輸出或失敗（本機未產生 transcript）時，才可略過本段。
 
 > 自我檢查（結束前必問）：**「我是否已把 report 指令的 stdout 表格貼進可見回覆？」** 若否 → 立即補貼，不得結束。
+
+> **表格缺席時的判讀**：Token 表格缺席**不代表流程異常** —— 四階段的成敗一律以 Executor 回報與磁碟狀態為準。缺席只代表本次沒有 token 資料可看；transcript 仍在，使用者可自行執行 `node .claude/scripts/token-usage/token_usage.js report tunit` 補取。**不得因表格缺席而重跑整個工作流程。**
 
 - 統計涵蓋 Orchestrator 主執行緒 ＋ 本次所有 `dotnet-testing-*` subagent；input 分純 input／cache 寫入／cache 讀取，另有含快取合計與 output。
 - 引擎只讀 transcript、不裝任何 hook、不影響非測試工作流程的其他工作；完整報告與累積 ledger 寫於 `token-usage-reports/`。詳見 `docs/TOKEN_USAGE_GUIDE.md`。

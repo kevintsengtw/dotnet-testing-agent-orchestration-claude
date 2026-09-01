@@ -162,9 +162,18 @@ test("read-scope：Writer 依 requiredSkills 允許實作 Skills，但不得越�
   assert.strictEqual(R.isSkillReadAllowed("dotnet-testing-writer", "dotnet-testing-orchestrator-unit").allowed, false);
 });
 
-test("read-scope：Reviewer 只能載入審查所需 Skills", () => {
+test("read-scope：Reviewer 可載入風險導向審查所需的目標型別 Skills", () => {
   assert.strictEqual(R.isSkillReadAllowed("dotnet-testing-reviewer", "test-naming-conventions").allowed, true);
+  assert.strictEqual(R.isSkillReadAllowed("dotnet-testing-reviewer", "fluentvalidation-testing").allowed, true);
+  assert.strictEqual(R.isSkillReadAllowed("dotnet-testing-reviewer", "datetime-testing-timeprovider").allowed, true);
+  assert.strictEqual(R.isSkillReadAllowed("dotnet-testing-reviewer", "filesystem-testing-abstractions").allowed, true);
+  // Reviewer 不審專案設定，維持禁止
   assert.strictEqual(R.isSkillReadAllowed("dotnet-testing-reviewer", "xunit-project-setup").allowed, false);
+  // 其他 workflow 專用 Skill 一律禁止
+  assert.strictEqual(
+    R.isSkillReadAllowed("dotnet-testing-reviewer", "dotnet-testing-advanced-aspire-testing").allowed,
+    false
+  );
 });
 
 test("read-scope：Unit Executor 只能載入 dotnet-test", () => {

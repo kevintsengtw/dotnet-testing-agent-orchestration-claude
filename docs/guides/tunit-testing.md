@@ -1,10 +1,10 @@
 # TUnit 測試工作流程使用指南
 
-TUnit 是新世代 .NET 測試框架，與 xUnit 有根本架構差異：TUnit 透過 **Roslyn Source Generator** 在編譯時產生測試發現程式碼，測試專案必須設定 `OutputType = Exe`，執行指令為 `dotnet run`（而非 `dotnet test`），並採用 **async-first 設計**（所有測試方法必須是 `async Task`）。此外，TUnit 支援 AOT 編譯，不依賴執行期反射。
+TUnit 是新世代 .NET 測試框架，與 xUnit 有根本架構差異：TUnit 透過 **Roslyn Source Generator** 在編譯時產生測試發現程式碼，測試專案必須設定 `OutputType = Exe`，執行指令為 `dotnet run`（而非 `dotnet test`），並採用 **async-first 設計**（所有測試方法必須是 `async Task`）。TUnit 也支援 AOT 編譯，不依賴執行期反射。
 
 本工作流程適用於兩種場景：
 
-- **新建 TUnit 測試**：為現有 .NET 類別建立 TUnit 測試
+- **新增 TUnit 測試**：為現有 .NET 類別建立 TUnit 測試
 - **xUnit → TUnit 遷移**：將現有 xUnit 測試轉換為 TUnit 語法，並補充新測試
 
 ---
@@ -289,7 +289,7 @@ TUnit Writer 的特殊行為：
 - 使用 `[Test]` 而非 `[Fact]`/`[Theory]`
 - 參數化測試優先使用 `[Arguments]`；decimal 等特殊型別改用 `[MethodDataSource]`
 - 前置設定用 `[Before(Test)]` 而非 constructor；後置清理用 `[After(Test)]` 而非 `IDisposable`
-- **分割策略**：方法數 > 5 或情境數 > 20 時自動分割為多個 Writer 平行處理（Validator 類別不分割）
+- **Writer 啟動**：一個被測類別固定一個 Writer、一個測試檔案，不論規模都不拆分
 
 ### Phase 3：Executor 建置與執行
 

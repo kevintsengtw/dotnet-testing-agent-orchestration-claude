@@ -220,9 +220,12 @@ dotnet test <solution-path> --no-build --verbosity minimal
 
 - [ ] `FakeTimeProvider` 欄位命名是否跨檔案一致（應統一為 `_timeProvider`，禁止混用 `_fakeTimeProvider`）
 - [ ] 例外斷言方法是否跨檔案一致（應統一使用 `.Throw<T>()`，禁止混用 `.ThrowExactly<T>()`）
-- [ ] lambda 委派宣告是否跨檔案一致（應統一使用 `var act = () =>`，禁止混用 `Action act = () =>`）
-- [ ] 物件比較斷言是否跨檔案一致（應統一使用 `BeEquivalentTo()` 或屬性逐一斷言，不得混用）
+- [ ] lambda 委派宣告是否跨檔案一致（應統一使用 `var act = () => X()`，禁止混用 `Action act = () =>`，**亦禁止 `var act = async () => await X()` 的 async 包裝**）
+- [ ] **例外斷言參數名**是否跨檔案一致（production 以 `nameof(x)` 拋出時應一律接 `.WithParameterName("x")`，不得一檔驗、另一檔不驗）
+- [ ] 物件比較斷言是否跨檔案一致（**應統一使用 `BeEquivalentTo()`** —— 此為範本與 orchestrator 風格指令的規定方向；逐一屬性斷言僅在驗證單一特定欄位時使用。**不得建議改成與指令相反的方向**）
 - [ ] `using` 排列順序和組織方式是否跨檔案一致
+- [ ] **檔內 `using` 是否重複宣告 `GlobalUsings.cs` 已涵蓋的命名空間**
+- [ ] **私有 helper 是否同名不同義**（兩檔各自定義同名 `CreateValid{Type}()` 但簽章或預設值不同；分割組應加負責範圍後綴以避免碰撞）
 
 ---
 

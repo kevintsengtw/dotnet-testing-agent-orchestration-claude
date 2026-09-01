@@ -111,7 +111,7 @@ Step 0 讀取的交接檔案中包含 `sourceCodeContext` 欄位（由 Analyzer 
 
 - **TFM 對齊**：EF Core 套件主版號 = targetFramework 主版號
 - **Aspire 對齊**：`Aspire.Hosting.Testing` 與 AppHost Aspire 版本同步
-- **版本通用**：SKILL.md 與 .csproj 取較高者為準，不主動查詢升級
+- **版本通用**：`.csproj` **既有的套件維持既有版本**，不因 SKILL.md 較新而升版（既有版本確實缺少測試所需 API 時才升版）。**新增套件**的版本來源依序為：① 有專屬對齊規則者依該規則（如上兩點的 TFM／Aspire 對齊，優先於以下各條）→ ② **生產專案已引用者，對齊生產專案版本**，即使 SKILL.md 記載更高版本也一樣（避免經由 `ProjectReference` 把生產端相依一併拉高）→ ③ 生產專案沒用而 SKILL.md 有記載者，用 SKILL.md → ④ 皆無則自行判斷並寫明依據。任一結果與傳遞相依下限衝突（`NU1605`）時由 Executor 升版，**你不需預先查詢**。所有版本變動必須列入 `nugetChanges`。不主動查詢升級
 
 #### 2b-2h：建立 AspireAppFixture、CollectionDefinition、IntegrationTestBase、DatabaseManager、launchSettings.json 檢查、資料庫初始化、目錄結構
 
@@ -154,6 +154,26 @@ tests/AppHost.Tests/
 使用 `#region 方法名稱` / `#endregion` 組織測試方法群組（按被測試方法分組），不使用 `//-----` 註解分割線。每個 region 對應一個被測試方法的所有測試案例。
 
 ### Rule 2：中文三段式命名
+
+測試方法命名：`端點操作_情境描述_預期行為`
+
+```csharp
+[Fact]
+public async Task 取得預約_預約存在_回傳200與該筆資料()
+```
+
+**全中文、禁英文識別字**（可機械判斷，逐一方法名執行）：
+
+**判準**：取方法名的**第 2 段（情境）與第 3 段（預期）**，若出現**連續 3 個以上的英文字母**，先對照下表判定。
+**分界原則：程式碼中的「值與型別」保留原文，「識別字」必須譯為中文。**
+
+| | 內容 | 處理 |
+|---|---|---|
+| **白名單**（保留原文） | 程式碼中的**值與型別**：回應型別名（`ProblemDetails`、`ValidationProblemDetails`）、例外型別名、列舉值（`狀態非Active`、`狀態為CheckedOut`）、語言字面值（`為null`、`應為true`）、HTTP 標頭與協定名（`Location`、`ETag`） | 不視為違反——中文化會失去與程式碼的對應 |
+| **違反**（必須改） | 程式碼中的**識別字**：屬性名（`CheckInDate`、`CustomerId`、`Quantity`）、參數名、欄位名、路徑片段 | 譯為中文（入住日期、客戶編號、數量） |
+
+**此檢查對 `suggestedTestScenarios` 逐字採用的名稱同樣適用** —— Analyzer 的場景命名不保證已轉換，**轉換責任在你**。
+
 ### Rule 3：使用 AwesomeAssertions
 
 HTTP 回應斷言必須使用 AwesomeAssertions.Web 的專用擴充方法：
@@ -266,3 +286,10 @@ global using AwesomeAssertions.Web;
 9. **中文三段式命名**
 10. **ContainerLifetime.Session 版本相依設定** — Aspire 9.0+ 必須檢查並設定，8.x 跳過
 11. **Aspire 13.1.0+ Redis TLS 處理** — 手動 Redis 連線需加入 `.WithoutHttpsCertificate()`
+12. **禁止無界檔案系統掃描** — 不得執行以檔案系統根目錄或使用者家目錄為起點的遞迴搜尋（`find /`、`find ~`、`find "$HOME"`、`find "C:/Users"`、`ls -R /`、`Glob("**/*")` 等），**無論是否加上 `| head -N` 限制輸出筆數**。`head` 只截斷輸出，不會終止上游的掃描 process，實測曾產生存活超過 60 分鐘的孤兒 process。
+    - 需要的資訊一律從**已知路徑**取得：Analyzer 交接檔案、`.csproj`、SKILL.md 與其 `templates/`／`references/`
+    - **允許的來源就是上面這幾類，其餘一律不讀** —— 尤其**不得讀取 `docs/`（專案文件、比較記錄、實驗產出）或其他測試專案的既有產出**。那些內容可能已過時、屬於別的被測目標、或是同一目標的舊版本；照抄會產出「看起來對、但不是為這次目標寫的」測試。**實測曾發生 Writer 讀取先前執行留在 `docs/` 下的完整測試檔並逐字沿用（404 行零差異）。**
+    - ❌ 禁止：以 `/`、`~`、`$HOME`、`$USERPROFILE`、`C:/Users` 為起點的遞迴搜尋；確實需要搜尋時**必須指定明確的起始目錄**且限制在專案範圍內
+    - ❌ 禁止：為了確認某個 API 是否存在而去掃描 NuGet 快取、DLL 或 XML 文件檔。**這是實測發生過的情況** —— 為了查 `Be409Conflict` 是否存在而 `find /`
+    - **SKILL.md 沒有示範的斷言方法，就當它不存在**：改用 SKILL.md 已示範的等價寫法（如狀態碼改以 `response.StatusCode.Should().Be(HttpStatusCode.Conflict)` 驗證），並在回傳摘要記一筆。寧可用確定可行的寫法，也不要為了漂亮的 API 去掃磁碟
+    - 優先使用 `Read`／`Grep`／`Glob` 工具而非 Bash 的 `find` —— 工具呼叫可被追蹤與中斷，detach 的 shell process 不行

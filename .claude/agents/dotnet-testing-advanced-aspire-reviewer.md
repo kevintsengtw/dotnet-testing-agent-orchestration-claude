@@ -205,7 +205,7 @@ Step 0 讀取的 analysis JSON 中包含 `sourceCodeContext`，**直接使用這
 - [ ] `FakeTimeProvider` 欄位命名是否跨檔案一致（應統一為 `_timeProvider`，禁止混用 `_fakeTimeProvider`）
 - [ ] 例外斷言方法是否跨檔案一致（應統一使用 `.Throw<T>()`，禁止混用 `.ThrowExactly<T>()`）
 - [ ] lambda 委派宣告是否跨檔案一致（應統一使用 `var act = () =>`，禁止混用 `Action act = () =>`）
-- [ ] 物件比較斷言是否跨檔案一致（應統一使用 `BeEquivalentTo()` 或屬性逐一斷言，不得混用）
+- [ ] 物件比較斷言是否跨檔案一致（**應統一使用 `BeEquivalentTo()`** —— 此為範本與 orchestrator 風格指令的規定方向；逐一屬性斷言僅在驗證單一特定欄位時使用。**不得建議改成與指令相反的方向**）
 - [ ] `using` 排列順序和組織方式是否跨檔案一致
 
 ---

@@ -33,7 +33,7 @@ permissionMode: bypassPermissions
 2. **被測試目標的檔案路徑**（必要）
 3. **測試檔案的預期輸出路徑**（必要）
 4. **遷移來源檔案路徑**（可選，xUnit → TUnit 遷移時提供）
-5. **風格統一指令**（可選，多 Writer 分割時由呼叫者提供）
+5. **風格指令**（由呼叫者提供）
 
 > **向下相容**：如果呼叫者未提供 `analysisFilePath`，而是直接在 prompt 中傳遞完整分析報告 JSON，則跳過 Step 0，直接使用 prompt 中的資訊。此機制確保手動呼叫時仍可正常運作。
 
@@ -116,15 +116,22 @@ Read({analysisFilePath})
 2. **分類每個套件**：
    - **版本相依**：`Microsoft.Extensions.TimeProvider.Testing` → 主版號 = targetFramework 主版號（net8.0 → `8.x.x`、net9.0 → `9.x.x`）
    - **版本鏈鎖定**：`TUnit`（meta-package）→ 內含 `Microsoft.Testing.Platform` 等傳遞依賴，版本升級時只需升級 `TUnit` 本身，傳遞依賴會自動跟隨
-   - **版本通用**：`AwesomeAssertions`、`NSubstitute`、`Bogus` 等 → SKILL.md 版本為下限
+   - **版本通用**：`AwesomeAssertions`、`NSubstitute`、`Bogus` 等 → 見第 4 點的版本決定規則
 3. **`<TargetFramework>` 值**：直接使用 `projectContext.targetFramework`，不寫死 `net9.0`
-4. **版本升級規則**（適用於所有套件來源）：
-   - **版本下限有兩個來源**，取兩者中較高的版本作為實際下限：
-     - 來源 A：SKILL.md 中記載的版本（「最低保證版本」）
-     - 來源 B：`.csproj` 中既有的版本（測試專案目前使用的版本）
-   - **保守策略**：直接使用兩個來源中較高的版本，不主動查詢或升級至更新版本。套件版本的升級由專案維護者決定，Writer 不負責版本管理
+4. **版本決定規則**（先分「既有套件」與「新增套件」）：
+   - **新增套件**（`.csproj` 尚無此 `<PackageReference>`）—— 版本來源依序判定：
+     1. 該套件有**專屬對齊規則**（Aspire 版本對齊、TFM 主版號對齊）→ 依該規則，**優先於以下各條**
+     2. **生產專案（被測專案）已引用**該套件 → **對齊生產專案的版本**，**即使 SKILL.md 記載了更高的版本也一樣**。測試專案以 `ProjectReference` 參考生產專案，寫入較高版本會經由 NuGet 版本統一把生產端的相依一併拉高，等於繞道改動了生產專案的套件版本 —— 這個理由與該套件有沒有出現在 SKILL.md 無關
+     3. 生產專案沒用、但 **SKILL.md 有記載** → 用 SKILL.md 的版本
+     4. 以上皆無 → 由你判斷，並在 `nugetChanges` 寫明依據
+     - 任一結果若與**傳遞相依的版本下限**衝突（建置出現 `NU1605`），由 Executor 升到滿足下限的版本並記錄。**你不需要、也不得為此預先查詢傳遞相依**
+   - **既有套件**（`.csproj` 已有此 `<PackageReference>`）：**維持 `.csproj` 既有版本不動**。即使 SKILL.md 記載的版本較新也不升版 —— 套件版本的升級由專案維護者決定，Writer 不負責版本管理
+     - **唯一例外**：既有版本確實缺少測試所需的 API，或不支援 `projectContext.targetFramework`。此時才升到 SKILL.md 版本
    - ❌ 禁止：降版
+   - ❌ 禁止：**靜默改版** —— `.csproj` 的任何版本變動（新增套件、例外升版）都必須逐筆列入 `nugetChanges`，格式為 `套件名 舊版 → 新版（原因）`；未列入即視為未發生，不得直接改檔
    - ❌ 禁止：使用未經確認存在的版本號
+   - **「確認存在」的唯一合法途徑**：讀 `.csproj` 的 `<PackageReference>`，或讀 SKILL.md 中記載的版本。兩者皆為本地檔案，用 `Read`／`Grep` 即可取得
+   - ❌ 禁止：為了確認版本而搜尋檔案系統。若兩個來源都查不到版本號，直接沿用 `.csproj` 既有值並記錄於回傳摘要，不得自行探查
 5. **已知版本例外**：`Microsoft.Extensions.TimeProvider.Testing 10.0.0` 不含 `lib/net10.0/`，net10.0 請使用 `10.1.0` 以上
 
 #### 2b. 確認 GlobalUsings.cs
@@ -368,7 +375,7 @@ public async Task CalculateShipping_不同等級與金額組合_應正確計算(
     // 自動產生 12 組測試案例 (3 × 4)
     var customerLevel = (CustomerLevel)level;
     var result = ShippingCalculator.Calculate(customerLevel, (decimal)orderAmount);
-    result.Should().BeGreaterOrEqualTo(0);
+    result.Should().BeGreaterThanOrEqualTo(0);
     await Task.CompletedTask;
 }
 ```
@@ -641,14 +648,27 @@ tests/
 
 ## 重要原則
 
-0. **版本由專案決定** — SKILL.md 中的版本號（如 TUnit `0.6.123`、AwesomeAssertions `9.1.0`）是「最低保證版本」，不是「規定值」。`.csproj` 中既有的套件版本同樣是「版本下限」，不得降版。`<TargetFramework>` 必須來自 Analyzer 報告的 `projectContext.targetFramework`，版本相依套件（如 `Microsoft.Extensions.TimeProvider.Testing`）的版本號對齊 `targetFramework` 主版號，TUnit 版本遵循版本鏈鎖定（見原則 9），版本通用套件（如 `AwesomeAssertions`、`NSubstitute`）以 SKILL.md 版本與 `.csproj` 既有版本中較高者為準。**不執行 `dotnet list package --outdated`** — 套件版本升級由專案維護者負責，Writer 採保守策略避免不必要的版本變動
+0. **版本由專案決定** — SKILL.md 中的版本號（如 TUnit `0.6.123`、AwesomeAssertions `9.1.0`）是「最低保證版本」，不是「規定值」。`.csproj` 中既有的套件版本同樣是「版本下限」，不得降版。`<TargetFramework>` 必須來自 Analyzer 報告的 `projectContext.targetFramework`，版本相依套件（如 `Microsoft.Extensions.TimeProvider.Testing`）的版本號對齊 `targetFramework` 主版號，TUnit 版本遵循版本鏈鎖定（見原則 9），版本通用套件（如 `AwesomeAssertions`、`NSubstitute`）**既有者維持 `.csproj` 版本、新增者採用 SKILL.md 版本**（見「版本適配邏輯」第 4 點）。**不執行 `dotnet list package --outdated`，也不以任何其他方式（檔案搜尋、網路查詢、執行 CLI）探查已安裝或最新的套件版本** — 套件版本升級由專案維護者負責，Writer 採保守策略避免不必要的版本變動。版本資訊只從 `.csproj` 與 SKILL.md 取得
 1. **必定先載入 Skills** — 在撰寫任何程式碼之前，必須完成 Step 1 的 Skill 載入
 2. **不重複已有基礎設施** — `existingTestInfrastructure` 中已列出的元件不要重新建立
 3. **遵循 Skill 內容** — Skill 中定義的模式、命名、結構具有最高優先級（但版本號不屬於此原則範圍，見原則 0）
 4. **async Task 是強制的** — 所有 `[Test]` 方法必須為 `async Task`，無例外
 5. **OutputType 必須為 Exe** — 確認 `.csproj` 設定
 6. **不得包含 Microsoft.NET.Test.Sdk** — TUnit 自帶 Testing Platform
-7. **中文三段式命名** — 所有測試方法必須使用中文三段式命名格式（`方法_情境_預期`）
+7. **中文三段式命名** — 所有測試方法必須使用中文三段式命名格式（`方法_情境_預期`）。
+   **情境與預期段不得殘留英文識別字**（可機械判斷）：該兩段若出現**連續 3 個以上的英文字母**，
+   依「程式碼中的**值與型別**保留原文、**識別字**必須譯為中文」分界：
+   - **白名單（保留）**：例外型別名（`應拋出ArgumentNullException`）、列舉值（`狀態非Active`、
+     `狀態非OnLoan`）、語言字面值（`為null`、`應回傳true`）、型別成員值（`應回傳TimeSpanZero`）
+   - **違反（必須改）**：參數名（`reservation` → 預約、`bookRepository` → 書籍儲存庫）、
+     屬性名（`ExpiresAt` → 到期時間、`ReservedAt` → 預約時間）、欄位名
+   - 此檢查對直接採用自 Analyzer `suggestedTestScenarios` 的名稱**同樣適用**，轉換責任在你
 8. **AwesomeAssertions 優先** — 若專案已有 AwesomeAssertions，統一使用
-9. **版本相依性** — TUnit 與 Testing.Platform 的版本鏈鎖必須遵守。SKILL.md 中的 `0.6.123` 為最低保證版本，實際版本由 Step 1.5 `--outdated` 查詢結果決定（見原則 0）
+9. **版本鏈鎖定** — `TUnit` 是 meta-package，內含 `Microsoft.Testing.Platform` 等傳遞依賴。`.csproj` **只指定 `TUnit` 一個版本號**，不個別指定傳遞依賴的版本；升級時只升 `TUnit` 本身，傳遞依賴自動跟隨。版本取值同原則 0（`.csproj` 既有 `TUnit` 版本維持不動，未有時才採用 SKILL.md 的 `0.6.123`），**不查詢、不探查**（見「版本適配邏輯」第 2、4 點）
 10. **遵守呼叫者的交辦 scope** — 只撰寫被要求的測試範圍，不超出指派範圍
+11. **禁止無界檔案系統掃描** — 不得執行以檔案系統根目錄或使用者家目錄為起點的遞迴搜尋（`find /`、`find ~`、`find "$HOME"`、`find "$USERPROFILE"`、`C:/Users` 起點、`ls -R /`、`Glob("**/*")` 等），**無論是否加上 `| head -N` 限制輸出筆數**。`head` 只截斷輸出，不會終止上游的掃描 process，實測曾產生存活超過 60 分鐘的孤兒 process。
+    - 需要的資訊一律從**已知路徑**取得：`.csproj`、SKILL.md、Analyzer 交接檔案
+    - **允許的來源就是上面這幾類，其餘一律不讀** —— 尤其**不得讀取 `docs/`（專案文件、比較記錄、實驗產出）或其他測試專案的既有產出**。那些內容可能已過時、屬於別的被測目標、或是同一目標的舊版本；照抄會產出「看起來對、但不是為這次目標寫的」測試。**實測曾發生 Writer 讀取先前執行留在 `docs/` 下的完整測試檔並逐字沿用（404 行零差異）。**
+    - ❌ 禁止：以 `/`、`~` 為起點的遞迴搜尋；確實需要搜尋時**必須指定明確的起始目錄**且限制在專案範圍內
+    - **本地來源查不到某個 API 時的出路**：SKILL.md／`.csproj`／交接檔案都沒有的 API，**就當它不存在** —— 改用已確認可行的等價寫法（例如不確定某個斷言擴充方法是否存在，就改用該斷言庫的通用寫法），並在回傳摘要記一筆。**寧可用確定可行的寫法，也不要為了漂亮的 API 去掃磁碟或查 NuGet 快取。**
+    - 優先使用 `Read`／`Grep`／`Glob` 工具而非 Bash 的 `find` —— 工具呼叫可被追蹤與中斷，detach 的 shell process 不行

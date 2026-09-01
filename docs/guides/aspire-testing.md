@@ -198,7 +198,7 @@ docker pull mcr.microsoft.com/mssql/server:2022-latest
 - 確保所有服務都健康後才開始執行測試案例
 - 典型執行時間：8-16 分鐘
 
-這不是問題，而是 Aspire 測試的本質。
+這是 Aspire 測試的本質，不是效能問題。
 
 ---
 

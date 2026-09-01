@@ -146,15 +146,22 @@ protected override void ConfigureWebHost(IWebHostBuilder builder)
 1. **讀取 `projectContext.targetFramework`**（由 Analyzer 提供，例如 `net8.0`、`net9.0`、`net10.0`）
 2. **分類每個套件**：
    - **版本相依**：`Microsoft.EntityFrameworkCore.SqlServer`、`Npgsql.EntityFrameworkCore.PostgreSQL` 等 EF Core 相關套件 → 主版號 = targetFramework 主版號
-   - **版本通用**：`Microsoft.AspNetCore.Mvc.Testing`、`AwesomeAssertions`、`Testcontainers.*`、`Respawn` 等 → SKILL.md 版本為下限（見版本升級規則）
+   - **版本通用**：`Microsoft.AspNetCore.Mvc.Testing`、`AwesomeAssertions`、`Testcontainers.*`、`Respawn` 等 → 見第 4 點的版本決定規則
 3. **`<TargetFramework>` 值**：直接使用 `projectContext.targetFramework`，不寫死 `net9.0`
-4. **版本升級規則**（適用於所有套件來源）：
-   - **版本下限有兩個來源**，取兩者中較高的版本作為實際下限：
-     - 來源 A：SKILL.md 中記載的版本（「最低保證版本」）
-     - 來源 B：`.csproj` 中既有的版本（測試專案目前使用的版本）
-   - **保守策略**：直接使用兩個來源中較高的版本，不主動查詢或升級至更新版本。套件版本的升級由專案維護者決定，Writer 不負責版本管理
+4. **版本決定規則**（先分「既有套件」與「新增套件」）：
+   - **新增套件**（`.csproj` 尚無此 `<PackageReference>`）—— 版本來源依序判定：
+     1. 該套件有**專屬對齊規則**（Aspire 版本對齊、TFM 主版號對齊）→ 依該規則，**優先於以下各條**
+     2. **生產專案（被測專案）已引用**該套件 → **對齊生產專案的版本**，**即使 SKILL.md 記載了更高的版本也一樣**。測試專案以 `ProjectReference` 參考生產專案，寫入較高版本會經由 NuGet 版本統一把生產端的相依一併拉高，等於繞道改動了生產專案的套件版本 —— 這個理由與該套件有沒有出現在 SKILL.md 無關
+     3. 生產專案沒用、但 **SKILL.md 有記載** → 用 SKILL.md 的版本
+     4. 以上皆無 → 由你判斷，並在 `nugetChanges` 寫明依據
+     - 任一結果若與**傳遞相依的版本下限**衝突（建置出現 `NU1605`），由 Executor 升到滿足下限的版本並記錄。**你不需要、也不得為此預先查詢傳遞相依**
+   - **既有套件**（`.csproj` 已有此 `<PackageReference>`）：**維持 `.csproj` 既有版本不動**。即使 SKILL.md 記載的版本較新也不升版 —— 套件版本的升級由專案維護者決定，Writer 不負責版本管理
+     - **唯一例外**：既有版本確實缺少測試所需的 API，或不支援 `projectContext.targetFramework`。此時才升到 SKILL.md 版本
    - ❌ 禁止：降版（`.csproj` 已有 `2.9.3` 時不得寫回 `2.9.2`）
+   - ❌ 禁止：**靜默改版** —— `.csproj` 的任何版本變動（新增套件、例外升版）都必須逐筆列入 `nugetChanges`，格式為 `套件名 舊版 → 新版（原因）`；未列入即視為未發生，不得直接改檔
    - ❌ 禁止：使用未經確認存在的版本號（寧可用下限版本也不要虛造版本）
+   - **「確認存在」的唯一合法途徑**：讀 `.csproj` 的 `<PackageReference>`，或讀 SKILL.md 中記載的版本。兩者皆為本地檔案，用 `Read`／`Grep` 即可取得
+   - ❌ 禁止：為了確認版本而搜尋檔案系統。若兩個來源都查不到版本號，直接沿用 `.csproj` 既有值並記錄於回傳摘要，不得自行探查
 
 #### 2b. 建立 WebApiFactory
 
@@ -416,6 +423,22 @@ Controllers/{Controller}Tests.cs
 
 > **修改模式**：當 `mode: "modification"` 時，讀取既有的 writer-result JSON 並更新，將 `modificationType` 改為 `"applied-reviewer-suggestions"`，更新 `modifiedAt`、`testCount`、`testFilePaths` 等欄位。
 
+> ⚠️ **分兩批啟動時（scenarioCount > 15）必須合併，不得覆蓋**：兩批寫入的是**同一個檔名**。
+> 第二批（測試案例）**必須先用 `Read` 讀取既有的 writer-result JSON**，把第一批（基礎設施）的
+> `nugetChanges` 與 `infrastructureFiles` **合併**進來再寫回。
+>
+> 原因：`.csproj` 由第一批建立，套件變動**全部記在第一批那筆**；第二批自己確實沒動套件，
+> 若直接 `Write` 覆蓋，`nugetChanges` 會變成 `[]` —— **`.csproj` 實際新增了套件，交接檔案卻
+> 寫「沒有變動」**，「禁止靜默改版」就此失效。這是實測發生過的情況（5 個套件全數消失）。
+>
+> 合併規則：`nugetChanges`、`infrastructureFiles` 取兩批的聯集；`testCount`、`testFilePaths`、
+> `testClasses`、`modifiedAt` 以第二批為準。
+>
+> ⛔ **`modificationType` 維持 `"initial"`** —— 分批的第二批仍屬初次撰寫，
+> **不是**套用 Reviewer 建議。只有 `mode: "modification"` 才寫
+> `"applied-reviewer-suggestions"`。`modifiedAt` 填**實際時間**（`date -u +"%Y-%m-%dT%H:%M:%SZ"`），
+> 不得填整點佔位值。
+
 ### Step 6：回傳精簡摘要
 
 寫入交接檔案後，你回傳給 Orchestrator 的**僅為精簡摘要**：
@@ -459,6 +482,18 @@ public async Task GetById_商品存在_應回傳該商品與200狀態碼()
 [Fact]
 public async Task Create_名稱為空_應回傳400ValidationProblemDetails()
 ```
+
+**全中文、禁英文識別字**（可機械判斷，逐一方法名執行）：
+
+**判準**：取方法名的**第 2 段（情境）與第 3 段（預期）**，若出現**連續 3 個以上的英文字母**，先對照下表判定。
+**分界原則：程式碼中的「值與型別」保留原文，「識別字」必須譯為中文。**
+
+| | 內容 | 處理 |
+|---|---|---|
+| **白名單**（保留原文） | 程式碼中的**值與型別**：回應型別名（`應回傳400ValidationProblemDetails`、`ProblemDetails`）、例外型別名、列舉值（`狀態非Active`、`狀態為CheckedOut`）、語言字面值（`為null`、`應為true`）、HTTP 標頭與協定名（`Location`、`ETag`） | 不視為違反——中文化會失去與程式碼的對應 |
+| **違反**（必須改） | 程式碼中的**識別字**：屬性名（`CheckInDate`、`CustomerId`、`Quantity`）、參數名、欄位名、路徑片段 | 譯為中文（入住日期、客戶編號、數量） |
+
+**此檢查對 `suggestedTestScenarios` 逐字採用的名稱同樣適用** —— Analyzer 的場景命名不保證已轉換，**轉換責任在你**。
 
 ### Rule 3：使用 AwesomeAssertions 與 AwesomeAssertions.Web
 
@@ -693,7 +728,7 @@ response.Should().Be201Created();
 
 ## 重要原則
 
-0. **版本由專案決定** — SKILL.md 中的版本號是「最低保證版本」，不是「規定值」。`.csproj` 中既有的套件版本同樣是「版本下限」，不得降版。`<TargetFramework>` 必須來自 Analyzer 報告的 `projectContext.targetFramework`，版本相依套件（如 `Microsoft.EntityFrameworkCore.SqlServer`）的版本號對齊 `targetFramework` 主版號，版本通用套件（如 `AwesomeAssertions`、`Testcontainers.*`）以 SKILL.md 版本與 `.csproj` 既有版本中較高者為準。**不執行 `dotnet list package --outdated`** — 套件版本升級由專案維護者負責，Writer 採保守策略避免不必要的版本變動
+0. **版本由專案決定** — SKILL.md 中的版本號是「最低保證版本」，不是「規定值」。`.csproj` 中既有的套件版本同樣是「版本下限」，不得降版。`<TargetFramework>` 必須來自 Analyzer 報告的 `projectContext.targetFramework`，版本相依套件（如 `Microsoft.EntityFrameworkCore.SqlServer`）的版本號對齊 `targetFramework` 主版號，版本通用套件（如 `AwesomeAssertions`、`Testcontainers.*`）**既有者維持 `.csproj` 版本、新增者採用 SKILL.md 版本**（見「版本適配邏輯」第 4 點）。**不執行 `dotnet list package --outdated`，也不以任何其他方式（檔案搜尋、網路查詢、執行 CLI）探查已安裝或最新的套件版本** — 套件版本升級由專案維護者負責，Writer 採保守策略避免不必要的版本變動。版本資訊只從 `.csproj` 與 SKILL.md 取得
 1. **必定先載入 Skills** — 在撰寫任何程式碼之前，必須完成 Step 1 的 Skill 載入
 2. **不重複已有基礎設施** — `existingTestInfrastructure` 中已列出的元件不要重新建立
 3. **遵循 Skill 內容** — Skill 中定義的模式、命名、結構具有最高優先級（但版本號不屬於此原則範圍，見原則 0）
@@ -704,3 +739,9 @@ response.Should().Be201Created();
 8. **遵守呼叫者的交辦 scope** — 只撰寫被要求的測試範圍，不超出指派範圍
 9. **對稱驗證覆蓋** — 共用相同驗證規則的端點必須有對等的驗證測試數量
 10. **嚴格遵循 SKILL.md 程式碼模式** — `ConfigureServices`（非 `ConfigureTestServices`）、`SingleOrDefault` descriptor 移除、直接初始化 Container、`InitializeAsync` 內部 `EnsureCreatedAsync`、IntegrationTestBase 基底類別、`Fixtures/` + `TestBase/` + `Controllers/` 目錄結構。任何 SKILL.md 中未出現的模式均不得使用
+11. **禁止無界檔案系統掃描** — 不得執行以檔案系統根目錄或使用者家目錄為起點的遞迴搜尋（`find /`、`find ~`、`find "$HOME"`、`find "$USERPROFILE"`、`C:/Users` 起點、`ls -R /`、`Glob("**/*")` 等），**無論是否加上 `| head -N` 限制輸出筆數**。`head` 只截斷輸出，不會終止上游的掃描 process，實測曾產生存活超過 60 分鐘的孤兒 process。
+    - 需要的資訊一律從**已知路徑**取得：`.csproj`、SKILL.md、Analyzer 交接檔案
+    - **允許的來源就是上面這幾類，其餘一律不讀** —— 尤其**不得讀取 `docs/`（專案文件、比較記錄、實驗產出）或其他測試專案的既有產出**。那些內容可能已過時、屬於別的被測目標、或是同一目標的舊版本；照抄會產出「看起來對、但不是為這次目標寫的」測試。**實測曾發生 Writer 讀取先前執行留在 `docs/` 下的完整測試檔並逐字沿用（404 行零差異）。**
+    - ❌ 禁止：以 `/`、`~` 為起點的遞迴搜尋；確實需要搜尋時**必須指定明確的起始目錄**且限制在專案範圍內
+    - **本地來源查不到某個 API 時的出路**：SKILL.md／`.csproj`／交接檔案都沒有的 API，**就當它不存在** —— 改用已確認可行的等價寫法（例如不確定某個斷言擴充方法是否存在，就改用該斷言庫的通用寫法），並在回傳摘要記一筆。**寧可用確定可行的寫法，也不要為了漂亮的 API 去掃磁碟或查 NuGet 快取。**
+    - 優先使用 `Read`／`Grep`／`Glob` 工具而非 Bash 的 `find` —— 工具呼叫可被追蹤與中斷，detach 的 shell process 不行

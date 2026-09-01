@@ -283,7 +283,7 @@ permissionMode: bypassPermissions
 
 > **`validatorInfo` 結構**（當 `targetType === "validator"` 時輸出，加入 `targetClasses[]` 對應項目內）：包含 `modelType`（`T` 的型別名）、`modelFilePath`（`T` 的檔案路徑）、`rules[]`（每項 `{ property, validations[], isCollection? }`）、`nestedValidators[]`（`{ property, validatorType, filePath }`）、`customMethods[]`（`{ methodName, description }`）、`crossFieldRules[]`（`{ condition, affectedProperties[] }`）、`validBaseObjectHint`（滿足所有規則的合法物件屬性值範例，格式：`{ "PropertyName": "exampleValue", ... }`，只列出有明確規則約束的屬性）。
 
-> **用途**：Writer 以 `validBaseObjectHint` 為基礎建立 `CreateValid{ModelType}()` helper，確保多個 Writer 並行時各自的 base object 均能通過所有驗證規則。
+> **用途**：Writer 以 `validBaseObjectHint` 為基礎建立 `CreateValid{ModelType}()` helper，確保 base object 能通過所有驗證規則。
 
 ---
 
@@ -326,7 +326,6 @@ permissionMode: bypassPermissions
 2. 確認 `projectContext.targetFramework`、`projectContext.solutionPath`、`projectContext.testProjectPath` 均不為空
 3. 確認 `targetClasses[].className` 不為空
 4. **Validator 類型額外驗證**：
-   - 精簡摘要中包含 `"forbidWriterSplit": true`
    - `validatorInfo.validBaseObjectHint` 不為空，且每個有約束的屬性都有對應值
    - `validBaseObjectHint` 中的每個屬性值確實滿足 `rules[]` 中對應的 `validations[]`
 
@@ -386,14 +385,13 @@ permissionMode: bypassPermissions
 }
 ```
 
-> **`targetType === "validator"` 時的精簡摘要**：必須在頂層加入 `"forbidWriterSplit": true`：
+> **`targetType === "validator"` 時的精簡摘要**：
 
 ```json
 {
   "status": "completed",
   "className": "OrderValidator",
   "targetType": "validator",
-  "forbidWriterSplit": true,
   "methodCount": 5,
   "scenarioCount": 20,
   "methodScenarioCounts": { "CustomerId": 3, "Items": 5, "CrossField_TotalAmount_Items": 4, "...": "..." },
@@ -409,7 +407,7 @@ permissionMode: bypassPermissions
 }
 ```
 
-> **`methodScenarioCounts`**：供 Orchestrator 判斷是否需要 Writer 分割（methods>5 / scenarios>20）及如何分組。當 `targetType === "validator"` 時，精簡摘要中必須包含 `"forbidWriterSplit": true`，禁止 Orchestrator 拆分 Validator 測試類別。
+> **`methodScenarioCounts`**：供 Orchestrator 掌握各方法的場景分佈，用於進度顯示與結果彙整。
 
 ---
 
@@ -425,7 +423,7 @@ permissionMode: bypassPermissions
 8. **matrixCandidate 辨識** — 多參數方法（特別是枚舉 × 數值的組合）應標記為 Matrix 測試候選（實際實作使用 `[MethodDataSource]` 搭配巢狀迴圈，因 `[MatrixDataSource]`/`[Matrix]` 在 TUnit 0.6.123 中不存在）
 9. **共享狀態辨識** — static 欄位、全域資源的存在必須識別為 `[NotInParallel]` 候選
 10. **migrationSource 判定範圍** — `migrationSource` 的值必須**僅依據測試專案本身的 `.csproj` PackageReference** 來判斷。若 `.csproj` 中包含 `xunit` 套件引用則為 `"xunit"`，包含 `NUnit` 則為 `"nunit"`，僅包含 `TUnit` 或無任何測試框架引用則為 `null`。**不得**因為工作區其他目錄（例如 `migration_source/`）中存在 xUnit 或 NUnit 測試檔案而將 `migrationSource` 設為非 null 值
-13. **Validator targetType 決定分析流程** — `targetType === "validator"` 時走 Step 2.5 的 Validator 專用分析流程，**跳過** Step 3 的方法簽章部分（只做依賴分析），`requiredSkills` 必須包含 `tunit-fundamentals`，且精簡摘要包含 `"forbidWriterSplit": true`（無論 scenarioCount 多大，Validator 類別永不分割）
+13. **Validator targetType 決定分析流程** — `targetType === "validator"` 時走 Step 2.5 的 Validator 專用分析流程，**跳過** Step 3 的方法簽章部分（只做依賴分析），`requiredSkills` 必須包含 `tunit-fundamentals`
 14. **輸出格式為緊湊 JSON** — 寫入交接檔案時使用 compact JSON（不加縮排、不加換行），以最小化 Writer 輸入 token
 11. **matrixCandidate 與 suggestedTestScenarios 互斥原則** — 當一個方法的 `matrixCandidate: true` 時，`suggestedTestScenarios` 中**只應包含一個 `[MethodDataSource]` 批次場景**（涵蓋所有組合），**不得同時列出個別組合案例**。例如，`CalculateAnnualFee` 若有 3 × 2 = 6 組合，只應列「CalculateAnnualFee_三種MembershipType與兩種isRenewal組合_應正確計算對應年費」，不應再逐一列出「CalculateAnnualFee_Basic且非續約_應回傳0」等 6 個個別案例。兩種方式並列會導致 Writer 重複實作，產生 12 個測試覆蓋相同 6 個邏輯案例。邊界/例外場景（如「CalculateAnnualFee_無效MembershipType_應拋出ArgumentOutOfRangeException」）不在此限，仍應個別列出
 12. **suggestedTestScenarios 命名禁止引用測試機制** — `suggestedTestScenarios` 的命名必須描述**預期行為**，**不得引用測試實作機制**（例如 `MethodDataSource`、`Arguments`、`ClassDataSource` 等）。錯誤範例：「BorrowBookAsync_三種MembershipType成功借閱_應以MethodDataSource驗證借閱期限」；正確範例：「BorrowBookAsync_依MembershipType借閱_借閱期限與MaxRenewals應符合會員等級規則」。第三段（預期結果）應描述業務邏輯的預期行為，而非測試框架的實作方式

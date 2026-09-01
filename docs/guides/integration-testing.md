@@ -1,6 +1,6 @@
 # 整合測試工作流程使用指南
 
-本文件說明如何使用 `dotnet-testing-orchestrator-integration` 為 ASP.NET Core WebAPI 自動產生整合測試。適用場景為需要驗證 HTTP 端點行為、資料持久化邏輯及中介軟體的整合測試，支援 InMemory、PostgreSQL、SQL Server、MongoDB、Redis 五種資料層組合。觸發指令：`/dotnet-testing-orchestrator-integration`。技術棧：WebApplicationFactory + Testcontainers + Respawn + AwesomeAssertions。
+本文件說明如何使用 `dotnet-testing-orchestrator-integration` 為 ASP.NET Core WebAPI 自動產生整合測試。適用場景為需要驗證 HTTP 端點行為、資料持久化邏輯及中介軟體的整合測試，支援 InMemory、PostgreSQL、SQL Server、MongoDB、Redis 五種資料層組合。觸發指令：`/dotnet-testing-orchestrator-integration`。技術組合：WebApplicationFactory + Testcontainers + Respawn + AwesomeAssertions。
 
 ---
 
@@ -192,9 +192,9 @@ docker pull redis:latest
 global using RedisOrder = StackExchange.Redis.Order;
 ```
 
-**5. Writer 分割沒有觸發**
+**5. Writer 沒有分兩次委派**
 
-- 說明：當測試情境數 > 15 時，Orchestrator 應自動分兩次委派 Writer（第一次建基礎設施，第二次寫測試）。若沒有觸發，可能是 Analyzer 的情境估計值偏低，導致 Orchestrator 誤判為單次即可完成。
+- 說明：當測試情境數 > 15 時，Orchestrator 應自動分兩次委派 Writer（第一次建基礎設施，第二次寫測試）。**這是 integration 專屬的兩階段委派，與 unit／tunit 已移除的平行 Writer 分割無關。**若沒有觸發，可能是 Analyzer 的情境估計值偏低，導致 Orchestrator 誤判為單次即可完成。
 - 後果：Writer 可能因輸出 token 超限而產生不完整的測試程式碼
 - 解法：在指令中明確說明端點數量與預估情境數，讓 Analyzer 的估算更準確
 
@@ -230,7 +230,7 @@ Orchestrator 將交接檔案路徑交給 `dotnet-testing-advanced-integration-wr
 
 Writer 建立的測試基礎設施包含：`WebApiFactory`（繼承 `WebApplicationFactory<TProgram>`）、`IntegrationTestBase`（含 `HttpClient` 與 Respawn 初始化）、`CollectionDefinition`（xUnit Collection Fixture）。
 
-**分割策略**：
+**兩階段委派策略**（integration 專屬，非平行分割）：
 
 | 測試情境數 | 委派策略                                                         |
 | ---------- | ---------------------------------------------------------------- |

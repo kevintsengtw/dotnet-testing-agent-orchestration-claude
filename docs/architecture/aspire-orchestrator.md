@@ -49,7 +49,7 @@ Aspire Orchestrator 固定使用單一 Skill：
 
 | Skill            | 載入時機              | 說明                                 |
 | ---------------- | --------------------- | ------------------------------------ |
-| `aspire-testing` | 由 Aspire Writer 載入 | 提供 Aspire 整合測試的撰寫規範與模板 |
+| `aspire-testing` | 由 Aspire Writer 載入 | 提供 Aspire 整合測試的撰寫規範與範本 |
 
 `requiredSkills` 固定為 `["aspire-testing"]`，不像 Unit/TUnit Orchestrator 有條件載入的組合。這是因為 Aspire 測試的技術組合固定（DistributedApplicationTestingBuilder + 資源管理），複雜度主要來自環境設定而非測試框架本身。
 

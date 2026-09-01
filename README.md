@@ -19,6 +19,7 @@
       - [步驟 5：驗證安裝](#步驟-5驗證安裝)
   - [快速開始](#快速開始)
   - [四種測試工作流程](#四種測試工作流程)
+  - [執行結果會呈現什麼](#執行結果會呈現什麼)
   - [練習專案](#練習專案)
   - [文件](#文件)
 
@@ -36,7 +37,10 @@ Orchestrator Skill
     └── Reviewer Subagent  （審查命名、斷言、覆蓋率、框架合規性）
 ```
 
-每個階段必須依序完成，Reviewer 提出改善建議後，Orchestrator 會再次呼叫 Writer + Executor 進行修正。
+四個階段必須依序完成，**Reviewer 一律執行**（無論 Executor 是否有修正迴圈）。
+
+Reviewer 提出改善建議後，Orchestrator **呈現結果並停下來等待你決定**是否套用。修改流程是 opt-in，不會自動再跑一輪
+Writer + Executor。
 
 > 詳細架構圖與各 Orchestrator 流程說明，請參閱 [docs/architecture/overview.md](docs/architecture/overview.md)
 
@@ -243,7 +247,7 @@ node .claude/scripts/skills/skills-doctor.js
 ls -d .agents/skills/*/ | wc -l    # 應為 29
 ```
 
-離開碼 0 代表五個部署目標齊備。數量不是 29 代表步驟 2 多複製了 `dotnet-testing-*` 以外的目錄（doctor 只檢查該有的 29 個是否到位，不會因多餘目錄報錯）。接著在 Claude Code 中輸入以下任一指令，確認斜線指令可用：
+離開碼 0 代表五個部署目標齊備。數量不是 29 代表步驟 2 多複製了 `dotnet-testing-*` 以外的目錄（doctor 只檢查該有的 29 個是否到位，不會因多餘目錄回報錯誤）。接著在 Claude Code 中輸入以下任一指令，確認斜線指令可用：
 
 ```text
 /dotnet-testing-orchestrator-unit
@@ -307,6 +311,51 @@ ls -d .agents/skills/*/ | wc -l    # 應為 29
 | 整合測試 | `/dotnet-testing-orchestrator-integration` | WebAPI + Testcontainers | .NET SDK + Docker | [使用指南](docs/guides/integration-testing.md) |
 | Aspire 測試 | `/dotnet-testing-orchestrator-aspire` | 分散式應用 | .NET SDK + Docker + Aspire | [使用指南](docs/guides/aspire-testing.md) |
 | TUnit 測試 | `/dotnet-testing-orchestrator-tunit` | TUnit 框架 / xUnit 遷移 | .NET SDK | [使用指南](docs/guides/tunit-testing.md) |
+
+---
+
+## 執行結果會呈現什麼
+
+四種工作流程完成後，Orchestrator 一律呈現下列項目。**每一項都必須出現**，沒有變動時也必須明說「未變動」。這是契約，不是慣例。
+
+| 呈現項目 | 內容 |
+| --- | --- |
+| 測試檔案 | 產出的測試檔案路徑（一個被測類別一個檔案） |
+| 執行結果 | 建置結果、通過／失敗數、修正迴圈次數 |
+| 品質審查 | Reviewer 評級與各審查面向結果 |
+| 改善建議 | 依優先級排列的問題與遺漏測試案例 |
+| **Writer 的技術選擇** | 實際讀取了哪些 Skill、偏離了哪些預設做法與理由（見下） |
+| Executor 修正紀錄 | 修正了哪些編譯／執行錯誤 |
+| **`.csproj` 變動** | 逐筆列出套件與版本前後；**未變動時明說「未變動」** |
+| **非測試程式碼變更** | 測試專案以外的檔案若被修改，逐筆列出路徑、摘要與原因；**未修改時明說** |
+| 各階段耗時 | 四階段耗時表 |
+| Token 用量 | Orchestrator 與各 Subagent 的分項統計 |
+| 後置清理狀態 | 暫存交接目錄的清理結果 |
+
+### 為什麼把這兩項列為契約
+
+`.csproj` 與測試專案以外的檔案，是**工作流程可能改到、但使用者不會主動去看**的地方。
+
+實測中曾出現：某次執行升級了 6 個 NuGet 套件（含 3 個主版號跳躍），版本判斷完全正確、交接檔案也有完整記錄，但結果整合隻字未提。使用者無從得知測試專案的套件基線已被改動。
+
+契約化之後，**「沒提」與「沒改」不再需要由使用者自行推斷**。
+
+### 一個被測類別，一個測試檔案
+
+不論方法數或情境數多寡，Orchestrator 都只啟動一個 Writer、產出一個 `{ClassName}Tests.cs`。
+
+早期版本會在方法數或情境數超過門檻時拆成兩個平行 Writer。實測顯示平行 Writer 之間無法協調，跨檔案的寫法必然漂移，而且**每次漂移的面向都不同**：補一條規則就換一個地方漂。改為單一檔案後此類問題整體消失。
+
+### Writer 的技術選擇是可稽核的
+
+技術要用哪些、測試資料怎麼造、mock 怎麼組，由 Writer 讀完被測目標的原始碼後自行判斷，不再由 Analyzer 事先指派。硬約束只有三類：專案慣例（中文三段式命名、AwesomeAssertions、AAA 標記、`#region` 分組、路徑跨平台）、輸出契約、測試必須全綠。
+
+其餘是**預設做法**，Writer 判斷不合用時可以偏離，但必須在交接檔案的 `deviations` 記錄理由，並由 Reviewer 逐筆審查理由是否成立。理由成立不算缺失，未記錄才算。
+
+| 呈現項目 | 內容 |
+| --- | --- |
+| `skillsConsulted` | Writer 實際讀取了哪些 Skill |
+| `deviations` | 偏離預設做法的項目與理由；**為空時亦須明說「未偏離」** |
 
 ---
 

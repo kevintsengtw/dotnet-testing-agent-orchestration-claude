@@ -62,13 +62,12 @@ Analyzer 讀取被測試目標的原始碼，識別類別類型與依賴，產�
 | 類型                 | 特徵                                                          | 特殊處理                                |
 | -------------------- | ------------------------------------------------------------- | --------------------------------------- |
 | Service（服務類別）  | 有外部依賴（Repository、DbContext、HttpClient 等），需要 Mock | 正常流程                                |
-| Validator（驗證器）  | 繼承 `AbstractValidator<T>`，使用 FluentValidation            | 永遠不分割（`forbidWriterSplit: true`） |
+| Validator（驗證器）  | 繼承 `AbstractValidator<T>`，使用 FluentValidation            | 條件載入 `.claude/agents/rules/unit-writer-validator.md` 的專屬規則 |
 | Legacy（遺留程式碼） | 靜態依賴、難以測試的設計（靜態方法、直接 `new` 相依物件）     | 需要特殊包裝策略                        |
 
 **Analyzer 輸出摘要（回傳給 Orchestrator 的欄位）：**
 
 - `className`、`targetType`、`methodCount`、`scenarioCount`、`methodScenarioCounts`
-- `requiredTechniques`、`skillMap`
 - `analysisFilePath`：實際寫入的交接檔案路徑
 - `projectContext`：目標框架版本（`net8.0` / `net9.0` / `net10.0`）
 
@@ -84,29 +83,28 @@ Writer 在 Step 0 讀取 Analyzer 的交接 JSON，按需載入對應的 Agent S
 
 範例：`CreateAsync_商品名稱已存在_應擲回DuplicateNameException`
 
-**Writer 分割策略：**
+**Writer 啟動規則：**
 
-| 條件                                        | 行為                              |
-| ------------------------------------------- | --------------------------------- |
-| `methodCount > 5` 或 `scenarioCount > 20`   | 觸發分割，同時啟動兩個平行 Writer |
-| `forbidWriterSplit: true`（Validator 類別） | 永遠不分割，強制單一 Writer       |
-| 其他情況                                    | 單一 Writer 處理全部方法          |
+**一個被測類別固定啟動一個 Writer，產出一個 `{ClassName}Tests.cs`。** 不論方法數或情境數多寡，都不拆分。
 
-**分割方式（貪心演算法）：**
+早期版本會在 `methodCount > 5` 或 `scenarioCount > 20` 時拆為兩個平行 Writer。實測顯示平行 Writer 之間無法協調預設值與寫法，跨檔案必然漂移，且每次漂移的面向都不同：補一條規則就換一個地方漂。改為單一檔案後此類問題整體消失。
 
-1. 將 `methodScenarioCounts` 中的方法按 scenario 數量降序排列。
-2. 依序將每個方法分配到目前 scenario 總數較少的那一組，目標是兩組 scenario 數量盡量接近。
-3. 同一方法的所有測試案例絕不跨組拆分。
-4. Writer 1 輸出至 `{TestDir}/Services/{ClassName}Tests.cs`，Writer 2 輸出至 `{TestDir}/Services/{ClassName}_{MethodName}Tests.cs`。
+**Skill 取用：**
+
+Writer 預載三項基礎 Skill（`unit-test-fundamentals`、`test-naming-conventions`、`xunit-project-setup`），其餘 16 個以目錄形式提供，由 Writer 讀完被測目標原始碼後自行決定要不要讀。Analyzer 不再產出 `requiredTechniques` 指派清單。
+
+實際讀取了哪些記於交接檔案的 `skillsConsulted`。
 
 **斷言規範：**
 
 - 必須使用 AwesomeAssertions（`result.Should().Be(...)`）。
 - 禁止使用 xUnit 內建的 `Assert.Equal` 等斷言方法。
 
-**多 Writer 風格統一要求（分割時）：**
+**規則分層：**
 
-- `using` 排列順序、AutoFixture 初始化方式、FakeTimeProvider 欄位命名與初始時間設定，所有 Writer 必須完全一致。
+契約層（不可偏離）：AAA 標記、中文三段式命名、AwesomeAssertions、`#region` 分組、路徑跨平台。
+
+建議層（可依判斷偏離）：測試資料建構策略、物件比對方式、邊界值標註、`[InlineData]` 展開策略、例外斷言寫法等。偏離時必須在交接檔案的 `deviations` 記錄理由，由 Reviewer 逐筆審查。理由成立不算缺失，未記錄才算。
 
 ### Phase 3 Executor
 
@@ -157,7 +155,7 @@ rm -rf "{testProjectDir}/.orchestrator/executor-result/"
 
 ---
 
-## 5. 支援的測試技術棧
+## 5. 支援的測試技術組合
 
 ```text
 xUnit 2.9+

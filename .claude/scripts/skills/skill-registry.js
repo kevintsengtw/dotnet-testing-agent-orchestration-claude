@@ -175,6 +175,10 @@ const ROLE_READ_SCOPE = {
       "dotnet-testing-nsubstitute-mocking",
       "dotnet-testing-complex-object-comparison",
       "dotnet-testing-code-coverage-analysis",
+      // 風險導向審查：依 targetType 與依賴特徵取用
+      "dotnet-testing-fluentvalidation-testing",
+      "dotnet-testing-datetime-testing-timeprovider",
+      "dotnet-testing-filesystem-testing-abstractions",
     ],
   },
   "dotnet-testing-executor": { orchestration: [], shared: [], tool: ["dotnet-test"], dynamic: false },

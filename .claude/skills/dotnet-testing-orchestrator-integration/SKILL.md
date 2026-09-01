@@ -87,6 +87,7 @@ Agent(subagent_type="dotnet-testing-advanced-integration-reviewer", prompt="..."
 - ❓ 我是否正在嘗試撰寫 C# 程式碼？→ **停止，交給 Writer**
 - ❓ 我是否正在嘗試執行 `dotnet build` 或 `dotnet test`？→ **停止，交給 Executor**
 
+- ❓ 我已貼出耗時表、正要進入 Phase 5 或輸出收尾提示？→ **停止，Token 表格必須先貼**（⛔ 只跑指令不貼 = 未完成）
 - ❓ 我已貼出 Token 表格、正準備結束回覆？→ **停止，還有 Phase 5 後置清理，且必須輸出其狀態行**
 
 **在收到每個 subagent 的回傳結果之前，不得採取任何程式碼相關行動。**
@@ -229,7 +230,12 @@ executorResultFilePath: {executorResultFilePath}
 
 ⛔ **這一行必須依 Executor 的實際回傳決定，不得憑印象或推定寫入。** 沒收到回傳就寫「完成」，等於流程沒做卻回報成功——假數據比缺失更難察覺。
 
-⛔ **回覆中沒有這一行 = 流程未完成。**
+⛔ **這一行必須輸出，且必須是整段回覆的最後一行。**
+
+> **該行缺席時的判讀（給閱讀回覆的人，非給本 Orchestrator）**：狀態行未出現在可見回覆
+> **不等於**流程未完成。環境彈窗、終端截斷、複製遺漏都可能讓它從可見回覆消失。
+> 缺席時一律**以磁碟為準**再判定：檢查 `{testProjectDir}/.orchestrator/` 是否已整個消失。
+> 目錄已消失即代表 Phase 5 已執行完成，**不得僅憑狀態行缺席就判定流程異常**。
 
 ---
 
@@ -260,7 +266,7 @@ executorResultFilePath: {executorResultFilePath}
 | Reviewer 回傳後 | `✅ 階段 4 完成（{hook 注入的耗時}）` |
 | **結果呈現後** | 輸出 `### ⏱ 各階段耗時` 表格（見下方格式） |
 | **耗時表之後** | 執行 `report` 指令並**把其 stdout 表格貼進回覆**（⛔ 只跑不貼 = 未完成；見「📊 Token 用量」段） |
-| **Token 表格之後**（真正最後一步）| 執行 Phase 5 後置清理，並輸出其狀態行（⛔ 回覆中沒有這一行 = 流程未完成；見「Phase 5：後置清理」段） |
+| **Token 表格之後**（真正最後一步）| 執行 Phase 5 後置清理，並輸出其狀態行（⛔ 必須輸出；該行缺席時以磁碟狀態判定，不得逕判流程未完成 — 見「Phase 5：後置清理」段） |
 
 ---
 
@@ -276,7 +282,9 @@ executorResultFilePath: {executorResultFilePath}
 4. **改善建議**（如果有的話）：Reviewer 的 `missingTestCases` 和 severity=warning 以上的問題
 5. **使用的 Skills 組合**：列出 Writer 載入了哪些 Integration Skills
 6. **Executor 修正紀錄**（如果有的話）：含生產程式碼 Bug 發現需特別標記
-7. **各階段耗時摘要**：結果呈現結束後，**必須**輸出以下格式的耗時表格（從 hook 注入的耗時資訊中取得各階段時間）
+7. **`.csproj` 變動**：彙整所有 Writer 回傳的 `nugetChanges` 逐筆列出（套件名 + 版本 前→後）。**即使為空也必須明說「`.csproj` 未變動」**——測試專案的套件基線被改動卻未告知，使用者無從察覺；「沒提」與「沒改」不得由使用者自行推斷
+8. **非測試程式碼變更**：若本次流程修改了測試專案以外的任何檔案（`src/` 下的生產程式碼、AppHost 設定等），必須逐一列出檔案路徑、變更摘要與變更原因（如 skill 規則明文要求）。**即使未修改也必須明說「未修改測試專案以外的檔案」**——`src/` 變更比 `.csproj` 更需要使用者知情，「沒提」與「沒改」不得由使用者自行推斷
+9. **各階段耗時摘要**：結果呈現結束後，**必須**輸出以下格式的耗時表格（從 hook 注入的耗時資訊中取得各階段時間）
 
 **結果呈現完畢後，必須緊接著輸出耗時摘要（不可省略）：**
 
@@ -311,6 +319,8 @@ Bash 的 stdout **不會自動顯示給使用者**，必須由你親手複製貼
 4. 只有當指令真的無輸出或失敗（本機未產生 transcript）時，才可略過本段。
 
 > 自我檢查（結束前必問）：**「我是否已把 report 指令的 stdout 表格貼進可見回覆？」** 若否 → 立即補貼，不得結束。
+
+> **表格缺席時的判讀**：Token 表格缺席**不代表流程異常** —— 四階段的成敗一律以 Executor 回報與磁碟狀態為準。缺席只代表本次沒有 token 資料可看；transcript 仍在，使用者可自行執行 `node .claude/scripts/token-usage/token_usage.js report integration` 補取。**不得因表格缺席而重跑整個工作流程。**
 
 - 統計涵蓋 Orchestrator 主執行緒 ＋ 本次所有 `dotnet-testing-*` subagent；input 分純 input／cache 寫入／cache 讀取，另有含快取合計與 output。
 - 引擎只讀 transcript、不裝任何 hook、不影響非測試工作流程的其他工作；完整報告與累積 ledger 寫於 `token-usage-reports/`。詳見 `docs/TOKEN_USAGE_GUIDE.md`。

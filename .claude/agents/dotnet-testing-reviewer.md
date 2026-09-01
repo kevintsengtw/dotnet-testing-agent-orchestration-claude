@@ -25,7 +25,7 @@ permissionMode: bypassPermissions
 
 1. **測試檔案路徑**（必要）— 如 `tests/MyProject.Core.Tests/Services/ProductServiceTests.cs`
 2. **被測試目標的檔案路徑**（必要）— 如 `src/MyProject.Core/Services/ProductService.cs`
-3. **`analysisFilePath`**（主要）— Analyzer 交接檔案路徑，我會在 Step 0 讀取此檔案提取 `skillMap.reviewer`、`targetType`、`validatorInfo` 等
+3. **`analysisFilePath`**（主要）— Analyzer 交接檔案路徑，我會在 Step 0 讀取此檔案提取 `targetType`、`dependencies`、`validatorInfo` 等
 4. **`writerResultFilePath`**（可選）— Writer 交接檔案路徑，用於取得 `testClasses`、`testMethodCount`、`testCaseCount` 等
 5. **`executorResultFilePath`**（可選）— Executor 交接檔案路徑，用於取得測試執行結果
 
@@ -43,7 +43,7 @@ permissionMode: bypassPermissions
 
 使用 Read 工具讀取所有可用的交接檔案：
 
-1. **`analysisFilePath`**（必要）→ 取得 `skillMap.reviewer`、`targetType`、`validatorInfo`、`suggestedTestScenarios`、`dependencies`
+1. **`analysisFilePath`**（必要）→ 取得 `targetType`、`validatorInfo`、`suggestedTestScenarios`、`dependencies`、`timeProviderUsage`、`fileSystemOperations`
 2. **`writerResultFilePath`**（可選）→ 取得 `testFilePaths`、`testClasses`、`testMethodCount`、`testCaseCount`
 3. **`executorResultFilePath`**（可選）→ 取得 `testResult`、`totalTests`、`passedTests`、`failedTests`、`fixHistory`
 
@@ -85,26 +85,32 @@ permissionMode: bypassPermissions
 }
 ```
 
-### Step 1：並行載入所有審查 Skills
+### Step 1：載入審查 Skills
 
-**讀取 Analyzer 報告的 `skillMap.reviewer` 清單，一次性批量（並行）讀取全部 SKILL.md。**
+共用技術 Skill 的 canonical 位置在 `.agents/skills/<name>/SKILL.md`，直接用 `Read` 工具讀取（subagent 以固定路徑載入，不經 Claude Code 的 Skill 掃描）。路徑不存在時回報錯誤並中止。
 
-> **⚡ 效率提示：請一次性批量讀取（並行）`skillMap.reviewer` 中的所有 SKILL.md，不要逐一循序讀取。** Analyzer 已根據被測試目標的特性計算出精確的 Skill 清單（固定 + 條件），你只需全部並行載入，無需重新推導。
+**固定載入兩項**（審查命名與結構的依據），在單一回合中平行 `Read`：
 
-> **Skill 載入**：下表列出每個技術型 Skill 的 SKILL.md 路徑。共用技術 Skill 的 canonical 位置在 `.agents/skills/<name>/SKILL.md`，直接用 `Read` 工具讀取（subagent 以固定路徑載入，不經 Claude Code 的 Skill 掃描）。路徑不存在時回報錯誤並中止，不得略過 Skill 直接審查。
+| 識別碼 | 路徑 |
+|--------|------|
+| `test-naming-conventions` | `.agents/skills/dotnet-testing-test-naming-conventions/SKILL.md` |
+| `unit-test-fundamentals` | `.agents/skills/dotnet-testing-unit-test-fundamentals/SKILL.md` |
 
-| `skillMap.reviewer` 項目 | SKILL.md 路徑 | 審查面向 |
-|--------------------------|-----------|---------|
-| `test-naming-conventions` | `.agents/skills/dotnet-testing-test-naming-conventions/SKILL.md` | 命名規範 |
-| `awesome-assertions` | `.agents/skills/dotnet-testing-awesome-assertions-guide/SKILL.md` | 斷言品質 |
-| `unit-test-fundamentals` | `.agents/skills/dotnet-testing-unit-test-fundamentals/SKILL.md` | 測試結構 |
-| `nsubstitute-mocking` | `.agents/skills/dotnet-testing-nsubstitute-mocking/SKILL.md` | Mock 正確性（條件） |
-| `complex-object-comparison` | `.agents/skills/dotnet-testing-complex-object-comparison/SKILL.md` | 複雜物件比對（條件） |
-| `code-coverage-analysis` | `.agents/skills/dotnet-testing-code-coverage-analysis/SKILL.md` | 覆蓋率分析（條件） |
+**其餘依審查需要自行選取。** Analyzer 不再計算 Reviewer 的 Skill 清單，改由你依分析報告的客觀事實（`targetType`、`dependencies`、`timeProviderUsage`、`fileSystemOperations`）與實際看到的測試內容決定：
 
-> **備註**：若審查途中（Step 3f）發現顯著覆蓋率缺口，而 `code-coverage-analysis` 未在 `skillMap.reviewer` 清單中，可於此時補充載入。
+| 識別碼 | 什麼時候需要 | 路徑 |
+|--------|-------------|------|
+| `awesome-assertions` | 要查斷言 API 是否寫錯 | `.agents/skills/dotnet-testing-awesome-assertions-guide/SKILL.md` |
+| `nsubstitute-mocking` | 被測目標有需要 Mock 的介面依賴 | `.agents/skills/dotnet-testing-nsubstitute-mocking/SKILL.md` |
+| `complex-object-comparison` | 測試中有複雜物件或集合比對 | `.agents/skills/dotnet-testing-complex-object-comparison/SKILL.md` |
+| `fluentvalidation-testing` | `targetType === "validator"` | `.agents/skills/dotnet-testing-fluentvalidation-testing/SKILL.md` |
+| `datetime-testing-timeprovider` | 有 `TimeProvider` 依賴 | `.agents/skills/dotnet-testing-datetime-testing-timeprovider/SKILL.md` |
+| `filesystem-testing-abstractions` | 有 `IFileSystem` 依賴 | `.agents/skills/dotnet-testing-filesystem-testing-abstractions/SKILL.md` |
+| `code-coverage-analysis` | 有覆蓋率需求，或審查途中發現顯著覆蓋缺口 | `.agents/skills/dotnet-testing-code-coverage-analysis/SKILL.md` |
 
-**read-scope**：上表以外的 Skill 一律不得載入 —— 不得載入任何 orchestration Skill、其他 workflow 專用 Skill，也不得讀取其他 agent 定義檔。
+**read-scope**：上兩表以外的 Skill 一律不得載入 —— 不得載入任何 orchestration Skill、其他 workflow 專用 Skill，也不得讀取其他 agent 定義檔。`xunit-project-setup` 亦在禁止之列（你不審專案設定）。
+
+> **例外**：`targetType` 為 `validator` / `legacy` 時，**必須**讀取 `.claude/agents/rules/unit-writer-{validator,legacy}.md`，作為契約檢核的依據。那不是 Skill，是本 repo 的規則檔。
 
 ### Step 2：讀取被測試目標原始碼
 
@@ -114,47 +120,74 @@ permissionMode: bypassPermissions
 - 確認 Mock 設定與介面方法簽章一致
 - 識別遺漏的測試案例
 
-### Step 3：逐項審查
+### Step 3：三段式審查
 
-依照已載入的 Skills，逐項檢查以下面向：
+> **不查未使用的 `using`。** 編譯器的 `IDE0005` / `CS8019` 會在 Executor 建置時回報，Reviewer 重複目視是浪費。
 
-#### 3a. 命名品質（來自 `test-naming-conventions` Skill）
+#### ① 契約檢核（違反即 error）
 
-- [ ] 每個測試方法名稱是否符合 `Method_Scenario_Expected` 格式
-- [ ] 命名是否清楚表達被測試的行為
-- [ ] 是否避免使用模糊詞彙（如 `Test1`、`Works`、`ShouldWork`）
-- [ ] Scenario 部分是否描述具體的輸入/狀態條件
-- [ ] Expected 部分是否描述具體的預期結果
-- [ ] 情境與預期描述是否使用中文（而非英文）
-- [ ] **Legacy Code 命名一致性**：當被測目標依賴靜態資料時，測試名稱的「預期」是否與 Assert 斷言一致（如名稱說「應回傳true」但 Assert 是 `BeFalse()` = **error 級別**）
-- [ ] **Characterization Test 命名**：Legacy Code 測試名稱是否描述「實際觸發的行為」而非「無法驗證的預期邊界」
+對照 `dotnet-testing-writer.md` 的「契約層（不可偏離）」五項逐一檢核。任一項不符一律標 `error`，不接受理由。
 
-#### 3b. 斷言品質（來自 `awesome-assertions` Skill）
-
+- [ ] 測試方法命名是否為中文三段式 `方法_情境_預期`
+- [ ] **情境與預期段是否殘留英文識別字**——判準：該兩段出現**連續 3 個以上的英文字母**即違反，**分界原則為「值與型別保留、識別字譯中文」**——白名單含例外型別名（`應拋出ArgumentNullException`）、列舉值（`狀態非Active`）、語言字面值（`為null`、`應為True`、`應回傳false`）、型別成員值（`應回傳TimeSpanZero`）；參數名（`timeProvider`）、屬性名（`ProductName`、`Items`）、欄位名一律視為違反，**含直接採用自 `suggestedTestScenarios` 者**（轉換責任在 Writer，不接受「Analyzer 就是這樣給的」作為理由）
 - [ ] 是否使用 AwesomeAssertions（`.Should()`）而非 xUnit 內建 `Assert.*`
+- [ ] 每個測試是否有 `// Arrange`／`// Act`／`// Assert` 標記
+- [ ] 是否使用 `#region 方法名稱` 按被測方法分組，未使用 `//-----` 分隔線
+- [ ] 測試資料中的路徑是否為跨平台寫法（正斜線 `/` 或 `Path.Combine`），無硬編 `C:\` 絕對路徑
+- [ ] `targetType` 為 `validator` / `legacy` 時，是否符合 `.claude/agents/rules/unit-writer-{validator,legacy}.md` 的規則
+
+#### ② 偏離審查
+
+讀取 `writer-result.deviations`，逐筆判斷理由是否成立。
+
+- **有記錄且理由成立** → 不算缺失，不列入報告
+- **有記錄但理由不成立**（例如只寫「比較簡單」而與被測目標特性無關）→ 標 `warning`，說明為什麼該偏離不合理
+- **未記錄卻偏離了建議層** → 標 `warning`
+
+| 建議層項目 | 偏離的樣子 |
+|-----------|-----------|
+| 一個測試一個行為 | 同一測試方法混驗不同性質的行為 |
+| 測試資料優先用 AutoFixture | 整份檔案重複手動 `new T { ... }` |
+| 物件比對優先用 `BeEquivalentTo()` | 對回傳物件逐一屬性斷言 |
+| 邊界值標註組成 | 邊界值測試資料無計算註解 |
+| `[InlineData]` 展開策略 | 同一等價類別放多個代表值，或案例數與場景數差距超過 50% |
+| 例外斷言寫法 | 用 `Action act =` 或 async 包裝；`nameof` 拋出卻未接 `.WithParameterName()` |
+
+> **不得建議與建議層相反的方向。** 例如不得建議把 `BeEquivalentTo()` 改成逐一屬性斷言。
+
+#### ③ 風險導向審查
+
+**核心必查**（不論被測目標為何）：
+
+- [ ] 每個公開方法是否至少有 1 個正常路徑測試
+- [ ] 建構子防禦測試：若建構子有 null guard（`?? throw new ArgumentNullException`），是否每個有 null guard 的參數都有對應的防禦測試
+- [ ] 是否有邊界條件測試（null、空集合、極值）
+- [ ] 是否有例外情境測試（`throw` 路徑）
+- [ ] 分支邏輯是否都有對應的測試案例
 - [ ] 斷言是否精確描述預期（避免 `.Should().NotBeNull()` 就結束）
 - [ ] 集合斷言是否使用 `.Should().HaveCount()`、`.Should().Contain()` 等
 - [ ] 例外斷言是否使用 `.Should().ThrowAsync<T>()` / `.Should().Throw<T>()`
 - [ ] 是否避免一個測試方法中有過多不相關的斷言
-- [ ] 當驗證回傳物件的多個屬性時，是否使用 `BeEquivalentTo()` 做物件級別比較，而非逐一比較個別屬性
-
-#### 3c. 測試結構（來自 `unit-test-fundamentals` Skill）
-
-- [ ] 每個測試是否有清楚的 Arrange / Act / Assert 結構
+- [ ] 命名是否清楚表達被測試的行為
+- [ ] 是否避免使用模糊詞彙（如 `Test1`、`Works`、`ShouldWork`）
+- [ ] Scenario 部分是否描述具體的輸入/狀態條件
+- [ ] Expected 部分是否描述具體的預期結果
 - [ ] 是否符合 FIRST 原則：Fast, Independent, Repeatable, Self-validating, Timely
 - [ ] 一個測試方法是否只驗證一個行為概念
 - [ ] 是否避免測試之間的依賴（共享狀態）
 - [ ] Setup 邏輯是否適當使用 constructor 或 fixture
-- [ ] 測試資料建構是否善用 AutoFixture `Build<T>().With()` 而非大量手動 `new T { ... }`
-- [ ] 邊界值測試是否標註數值組成（如 `// 92 + 9 = 101 chars`），計算是否正確
-- [ ] Theory InlineData 展開是否合理（每個值是否有獨立邊界意義，是否與 Analyzer 場景數量對齊）
 
-#### 3d. 程式碼品質
+**依特徵展開**（只做符合條件的）：
 
-- [ ] 是否有未使用的 `using` 指示詞（如使用 FluentValidation TestHelper 時多餘的 `using AwesomeAssertions;`）
-- [ ] 是否有不必要的命名空間引入（「以防萬一」的 using）
+| 條件 | 展開的審查 |
+|------|-----------|
+| 分析報告的 `dependencies` 有 `needsMock: true` | Mock 品質（見下） |
+| `targetType === "validator"` 且 `validatorInfo.nestedValidators[]` 非空 | 巢狀 Validator 覆蓋率（見下） |
+| `targetType === "validator"` 且 `crossFieldRules[]` 或 `customMethods[]` 非空 | 條件式規則覆蓋率（見下）—— **失敗與成功分支各須有測試** |
+| `targetType === "legacy"` | Legacy 命名與斷言一致性（見下） |
+| 分析報告含 `legacyInfo.productionRefactorSuggestion` | Production 重構 opt-in 旗標（見下） |
 
-#### 3e. Mock 品質（條件審查，來自 `nsubstitute-mocking` Skill）
+**Mock 品質**
 
 - [ ] Mock 設定是否只 mock 介面，不 mock 具體類別
 - [ ] `Returns()` / `ReturnsForAnyArgs()` 使用是否合理
@@ -162,15 +195,7 @@ permissionMode: bypassPermissions
 - [ ] 是否過度 Mock（Mock 了不相關的方法）
 - [ ] 非同步方法是否使用 `Returns(Task.FromResult(...))` 或 `ReturnsForAnyArgs()`
 
-#### 3f. 覆蓋完整性
-
-- [ ] 每個公開方法是否至少有 1 個正常路徑測試
-- [ ] 建構子防禦測試：若建構子有 null guard（`?? throw new ArgumentNullException`），是否每個有 null guard 的參數都有對應的防禦測試
-- [ ] 是否有邊界條件測試（null、空集合、極值）
-- [ ] 是否有例外情境測試（`throw` 路徑）
-- [ ] 分支邏輯是否都有對應的測試案例
-
-#### 3f-2. 巢狀 Validator 覆蓋率（當被測試目標為 Validator 類型）
+**巢狀 Validator 覆蓋率**
 
 > ℹ️ 當 Analyzer 報告中 `targetType === "validator"` 且 `validatorInfo.nestedValidators[]` 不為空時，執行此步驟。
 
@@ -188,24 +213,22 @@ permissionMode: bypassPermissions
 }
 ```
 
-#### 3g. 跨檔案一致性（Multi-Writer 分割時）
+**條件式規則覆蓋率**
 
-> ℹ️ 當測試由多個 Writer 分割產出時，檢查以下跨檔案一致性項目。若只有單一 Writer，可略過此步驟。
+> ℹ️ 當 `targetType === "validator"` 且 `validatorInfo.crossFieldRules[]` 或 `customMethods[]` 不為空時，執行此步驟。
 
-- [ ] `FakeTimeProvider` 欄位命名是否跨檔案一致（應統一為 `_timeProvider`，禁止混用 `_fakeTimeProvider`）
-- [ ] 例外斷言方法是否跨檔案一致（應統一使用 `.Throw<T>()`，禁止混用 `.ThrowExactly<T>()`）
-- [ ] lambda 委派宣告是否跨檔案一致（應統一使用 `var act = () =>`，禁止混用 `Action act = () =>`）
-- [ ] 物件比較斷言是否跨檔案一致（應統一使用 `BeEquivalentTo()` 或屬性逐一斷言，不得混用）
-- [ ] `using` 排列順序和組織方式是否跨檔案一致
-- [ ] **constructor 區塊順序**是否跨檔案一致（fixture → mocks → timeProvider → SUT；含 `ThrowingRecursionBehavior` 移除寫法、`SetUtcNow` 初始時間值）
-- [ ] **欄位宣告順序**是否跨檔案一致（`_fixture` → mocks → `_timeProvider` → `_sut`）
-- [ ] **XML class 註解格式**是否跨檔案一致（應統一為 `/// class {ClassName} - {被測類別} 測試類別（...）`）
-- [ ] **region 風格**是否跨檔案一致（每方法 `#region {方法名}`、helper 用 `#region 私有 Helper 方法`，禁混用 `//-----` 分隔線）
-- [ ] **AAA 標示**是否跨檔案一致（一律 `// Arrange`/`// Act`/`// Assert` + 空行分隔）
-- [ ] **helper 預設值策略**是否跨檔案一致（`CreateValid{Type}()` 預設值用固定正值，禁某檔用 `Random` 範圍語義、另一檔用固定值）
-- [ ] **Constructor null-guard 測試歸屬**：是否**只在主組檔出現一次**（分割組檔不應有 `#region Constructor`；兩檔皆寫=重複，兩檔皆缺=覆蓋缺口，均應標 warning）
+1. 逐條列出 `crossFieldRules[]`（`When`／`Unless`）與 `customMethods[]`（`Must()`）
+2. **每條各確認兩件事**：失敗分支有測試、**成功分支也有測試**
+3. **只有失敗分支的**，標為 `warning` 級別的 `coverage` 問題並列入 `missingTestCases`
 
-#### 3h. Production 重構 opt-in 旗標（當分析報告含 `legacyInfo.productionRefactorSuggestion`）
+> **為什麼要特別查成功分支**：一般屬性規則的成功分支由「所有欄位合法」場景涵蓋，但條件式規則不然 —— 合法基底物件通常讓條件不成立（如 `CreateValid{Type}()` 預設 `ProcessedAt = null`，使 `When(x => x.ProcessedAt.HasValue)` 底下的規則從未被觸發）。**測試會全綠，但那條規則只驗過一半。**
+
+**Legacy 命名與斷言一致性**
+
+- [ ] **Legacy Code 命名一致性**：當被測目標依賴靜態資料時，測試名稱的「預期」是否與 Assert 斷言一致（如名稱說「應回傳true」但 Assert 是 `BeFalse()` = **error 級別**）
+- [ ] **Characterization Test 命名**：Legacy Code 測試名稱是否描述「實際觸發的行為」而非「無法驗證的預期邊界」
+
+**Production 重構 opt-in 旗標**
 
 > ℹ️ 當 Analyzer 報告的 `legacyInfo.productionRefactorSuggestion` 存在時執行此步驟。
 
@@ -226,7 +249,7 @@ permissionMode: bypassPermissions
 {
   "overallScore": "B+",
   "summary": "測試結構良好，命名大多符合規範，但部分斷言可以更精確，且缺少 2 個邊界條件測試。",
-  "skillsLoaded": [
+  "skillsConsulted": [
     "test-naming-conventions",
     "awesome-assertions-guide",
     "unit-test-fundamentals",
@@ -282,7 +305,7 @@ permissionMode: bypassPermissions
 }
 ```
 
-> **選用欄位 `productionRefactorOptIn`**（僅在分析報告含 `legacyInfo.productionRefactorSuggestion` 時加入，見 Step 3h）：
+> **選用欄位 `productionRefactorOptIn`**（僅在分析報告含 `legacyInfo.productionRefactorSuggestion` 時加入，見 Step 3 的「Production 重構 opt-in 旗標」）：
 > ```json
 > "productionRefactorOptIn": {
 >   "issue": "硬編 Windows 路徑 + 直接 File.IO，無法跨平台測試",
