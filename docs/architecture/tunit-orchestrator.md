@@ -70,6 +70,7 @@ Orchestrator 啟動後，首先使用 Glob 檢查測試專案目錄下是否有�
 
 - 讀取被測試類別的完整原始碼
 - 識別建構子依賴（需要哪些 interface / service）
+- 把被測類別明確宣告的每個 public 建構子列成測試情境（含只委派者），有 null guard 的參數各再加一個防禦情境；未宣告任何建構子、或無 public 建構子的類別不列管
 - 識別所有公開方法（方法名、參數型別、回傳型別）
 - 偵測目標類型（validator / service / repository 等）
 - 進行框架偵測：判斷是新增測試，還是從 xUnit/NUnit 遷移的場景

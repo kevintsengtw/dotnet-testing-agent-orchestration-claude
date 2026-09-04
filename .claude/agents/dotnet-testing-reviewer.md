@@ -160,6 +160,11 @@ permissionMode: bypassPermissions
 **核心必查**（不論被測目標為何）：
 
 - [ ] 每個公開方法是否至少有 1 個正常路徑測試
+- [ ] **建構子測試覆蓋（強制）**：讀被測目標原始碼列出**明確宣告的所有 public 建構子**（含無參數建構子、**只委派給其他建構子者**如 `OrderValidator() : this(TimeProvider.System)`、以及每個多載），確認每個至少有一個對應測試。缺者一律列入 `missingTestCases`，`category` 為 `coverage`，**severity 依缺漏來源分流**：
+  - 分析報告的 `suggestedTestScenarios` **有**對應的 `Constructor_` 場景，但測試檔沒有對應測試，且 `writer-result.deviations` 未記錄理由 → **`error`**。這不是覆蓋缺口而是**契約違反**——Writer 略過了已列管的場景又未記錄偏離
+  - 分析報告**沒有**列出該建構子場景，是你讀原始碼才發現的 → **`warning`**（單純的覆蓋缺口）
+  
+  **不適用於**：無 public 建構子的類別（`static` 或建構子皆非 public），以及原始碼中未宣告任何建構子、只有編譯器隱含無參數建構子的類別（如 `TemperatureConverter`）——後者不得因「缺建構子測試」而標任何問題
 - [ ] 建構子防禦測試：若建構子有 null guard（`?? throw new ArgumentNullException`），是否每個有 null guard 的參數都有對應的防禦測試
 - [ ] 是否有邊界條件測試（null、空集合、極值）
 - [ ] 是否有例外情境測試（`throw` 路徑）

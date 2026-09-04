@@ -311,6 +311,7 @@ Analyzer subagent 接收 Orchestrator 委派後，執行以下工作：
   - `I*` 介面 → 需要 NSubstitute Mock
   - `TimeProvider` → 特殊處理，使用 FakeTimeProvider
   - `IFileSystem` → 特殊處理，使用 MockFileSystem
+- 把被測類別**明確宣告的每個 public 建構子**列成測試情境（含只委派給其他建構子者、每個多載）；有 null guard 的參數各再加一個防禦情境。未宣告任何建構子、或無 public 建構子的類別不列管
 - 估算各方法的測試情境數量（`methodScenarioCounts`），供進度顯示與結果彙整使用
 - 產出結構化 JSON 分析報告，寫入 `.orchestrator/analysis/{ClassName}.analysis.json`
 
@@ -360,6 +361,7 @@ Reviewer subagent 接收 Orchestrator 委派後，審查以下項目：
 | Mock 設定正確性    | NSubstitute 的 Stub 設定是否合理，是否有多餘的 `Received()` 驗證 |
 | AutoFixture 一致性 | Fixture 初始化方式是否在同一個測試類別中保持一致                 |
 | 覆蓋完整性         | 是否涵蓋 happy path、邊界條件、例外處理三種情境                  |
+| 建構子測試覆蓋     | 每個明確宣告的 public 建構子是否都有對應測試；缺漏一律列入 `missingTestCases` |
 
 Reviewer 完成後回傳品質評分報告（`overallScore`）與具體改善建議（`issues`、`missingTestCases`）。
 

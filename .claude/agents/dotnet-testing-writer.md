@@ -327,7 +327,9 @@ public class {TestClassName}
 
 3. **共用 helper 方法**：當 3+ 個測試使用相同結構的輸入物件時，**必須**提取 `CreateValid{Type}()` 私有靜態 helper 方法。各測試只 override 需要差異化的屬性。**例外（規則 A）**：若 base object 含比對注入 `TimeProvider` 的時間欄位，改為 instance helper、時間欄位由 `_timeProvider.GetUtcNow().UtcDateTime` 推導，禁靜態真實時鐘。
 
-3. **建構子 null guard 測試**：若被測試類別的建構子有 `?? throw new ArgumentNullException` 防禦，**必須**為每個有 null guard 的參數撰寫對應的建構子防禦測試。命名格式：`Constructor_{參數名稱}為null_應拋出ArgumentNullException`。
+3. **建構子測試**：分析報告 `suggestedTestScenarios` 中**首段為 `Constructor` 的場景必須全數撰寫**，不得以「建構子沒有邏輯」或「只是委派給另一個建構子」為由略過。
+   - **建立成功場景**：Act 建立 SUT，Assert 斷言建立成功（如 `sut.Should().NotBeNull()`）
+   - **null guard 場景**（建構子有 `?? throw new ArgumentNullException` 或 `ArgumentNullException.ThrowIfNull(x)` 防禦時，每個受防禦參數各一個）：命名格式 `Constructor_{中文參數描述}為null_應拋出ArgumentNullException`。**參數名必須依契約層第 2 項譯為中文**（`timeProvider` → 時間提供者）——寫成 `Constructor_timeProvider為null_...` 會被 Reviewer 以「英文識別字入名」判 error。
 
 #### 契約層（不可偏離）
 
@@ -456,7 +458,7 @@ public class {TestClassName}
 | 真假時鐘混用 | `CreateValid{Type}()` 時間欄位用 `DateTime.UtcNow`/`DateTime.Now` 而非注入的 `_timeProvider` | 改 instance helper，時間欄位由 `_timeProvider.GetUtcNow()` 推導（規則 A） |
 | 冗餘 ProjectReference | validator 測試為取得 FluentValidation 在 tests `.csproj` 新增第二個 `ProjectReference` | 移除；既有指向 SUT 的 `ProjectReference` 已傳遞（規則 B） |
 | 重複物件建構 | 相同結構的 `new Order { ... }` 或 `new T { ... }` 出現 3+ 次 | 提取 `CreateValid{Type}()` helper |
-| 缺建構子防禦 | 被測試類別建構子有 `?? throw new ArgumentNullException` 但無對應測試 | 補充建構子 null guard 測試 |
+| 缺建構子測試 | 分析報告有 `Constructor` 開頭場景（含無參數委派建構子），但測試檔無對應的測試方法 | 補齊該建構子的建立成功測試；有 null guard 的參數另補防禦測試 |
 | 未寫入磁碟 | 只在回應文字中輸出了測試程式碼，但未執行 `Write` 工具呼叫 | 立即使用 `Write` 工具將完整測試程式碼寫入 Step 3.5 確認的路徑 |
 | 英文測試命名 | 測試方法名稱使用英文（如 `Test_ValidOrder_ShouldPass`）而非中文三段式 | 將所有英文命名改為中文三段式格式 `方法_情境_預期` |
 | 偏離標準範本 | constructor 區塊順序、欄位順序、XML class 註解格式、region 風格、AAA 標示與「測試類別標準範本」骨架不符 | 比照標準範本骨架調整，使結構與骨架完全一致 |

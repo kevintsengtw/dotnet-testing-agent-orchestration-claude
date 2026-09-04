@@ -12,6 +12,7 @@
 - 巢狀 Validator（`validatorInfo.nestedValidators[]`）：測試巢狀物件的驗證傳播
 - 自訂方法（`validatorInfo.customMethods[]`）：測試 `Must()` 方法的邏輯
 - 跨欄位規則（`validatorInfo.crossFieldRules[]`）：測試 `When`/`Unless` 條件
+- **建構子場景不得略過**：`suggestedTestScenarios` 中首段為 `Constructor` 的場景（Analyzer Step 2.5 強制列管的產出）**必須全數撰寫**，不得因 `validatorInfo.rules[]` 未涵蓋而略過。這些場景已計入 `suggestedTestScenarios`，下一條的 150% 上限隨之放寬，不會排擠規則測試。本條屬契約層，略過且未於 `deviations` 記錄理由時，Reviewer 判 `error`（與 `dotnet-testing-reviewer.md` 的建構子測試覆蓋分流一致）。
 - **測試案例數量控制**：Validator 的測試方法總數應以 `suggestedTestScenarios` 數量為基準（上限為 150%）。優先使用 `[Theory]` + `[InlineData]` 合併同一屬性多個等價邊界值，避免為每個無效值都建立獨立 `[Fact]`
 - **時間相依 base object（規則 A）**：當 base object 含「比對注入 `TimeProvider` 的日期欄位」（`timeProviderUsage` 非空 或 `specialHandling: "datetime"`）時，`CreateValid{Type}()` 改為 **instance 方法**，時間欄位由 `_timeProvider.GetUtcNow().UtcDateTime.AddYears(-2)` 推導取安全過去日期；禁 `DateTime.UtcNow`/`DateTime.Now`/寫死日期。非時間相依 validator 維持 static + 固定正值。
 - **FluentValidation 套件（規則 B）**：validator 目標**保持 tests `.csproj` 不動** —— **禁止新增 `FluentValidation` PackageReference，也禁止為取得 FluentValidation 而新增任何 `ProjectReference`**。測試專案既有的、指向 SUT 的 `ProjectReference` 已傳遞性提供 `FluentValidation` 與 `TestHelper`（v10+ 併入主套件）。

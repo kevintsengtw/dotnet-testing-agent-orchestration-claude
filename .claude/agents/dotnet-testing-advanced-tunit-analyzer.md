@@ -105,7 +105,7 @@ permissionMode: bypassPermissions
 
 #### 若 `targetType === "validator"`：執行 Validator 專用分析
 
-> **重要**：Validator 類型**跳過** Step 3 的方法簽章分析（Validator 邏輯在建構子規則中，不在公開方法中）。但仍需執行 Step 3 的建構子依賴分析（識別 `TimeProvider` 等注入）。
+> **重要**：Validator 類型**跳過** Step 3 的方法簽章分析（Validator 邏輯在建構子規則中，不在公開方法中）。但仍需執行 Step 3 的建構子依賴分析（識別 `TimeProvider` 等注入），**以及 Step 3.5（建構子場景強制列管）**——validator 的場景全部來自本節的規則展開，建構子若不由 Step 3.5 列管就沒有任何進入場景的管道。
 
 1. **擷取泛型參數 `T`**：找到 `AbstractValidator<T>` 中的 `T` 型別（如 `Order`）
 2. **讀取 `T` 的 Model 定義**：使用 `Grep` 找到 `T` 的類別定義，列出所有屬性
@@ -159,6 +159,25 @@ permissionMode: bypassPermissions
 | **時間相依** | TimeProvider / DateTime 使用 | FakeTimeProvider 候選 |
 | **檔案系統依賴** | IFileSystem / File.* 呼叫 | MockFileSystem 候選 |
 
+### Step 3.5：建構子場景強制列管（強制規則，所有 `targetType` 一律執行）
+
+Step 3 的「建構子依賴」只辨識需要 Mock 的 interface 清單，**不產生任何場景**。本步驟負責把**建構子本身**列入待測範圍，不容 run 間判斷差異。
+
+> ⚠️ 這裡指的是**被測類別**的建構子，與測試類別的生命週期無關 —— TUnit 的測試類別一律用 `[Before(Test)]` / `[After(Test)]` 而非建構子，兩者不要混淆。
+
+1. **列出被測類別在原始碼中明確宣告的所有 public 建構子**，一個都不得略過，含：
+   - 明確宣告的無參數建構子
+   - **只委派給其他建構子的建構子**（如 `OrderValidator() : this(TimeProvider.System)`）—— 委派本身就是要被執行的程式碼路徑，**不得以「沒有自己的邏輯」為由略過**
+   - 多載建構子（每個多載各自列管）
+2. **每個明確宣告的 public 建構子至少產出一個 `suggestedTestScenarios` 條目**，首段固定為 `Constructor`：
+   - 無參數：`Constructor_無參數_應可正常建立`
+   - 有參數多載：`Constructor_提供{中文參數描述}_應可正常建立`
+3. **有 null guard 的參數各加一個防禦場景**：建構子含 `?? throw new ArgumentNullException` 或 `ArgumentNullException.ThrowIfNull(x)` 時，每個受防禦參數產出 `Constructor_{中文參數描述}為null_應拋出ArgumentNullException`。**參數名依「重要原則 5」的中文三段式規範譯為中文**（`timeProvider` → 時間提供者），不得直接嵌入英文參數名。
+4. **`methodScenarioCounts` 必須含 `"Constructor"` 條目**，其值等於本步驟產出的場景總數；`Constructor` **不計入 `methodCount`**。
+5. **兩個例外**（符合任一即不產出建構子場景，`methodScenarioCounts` 也不得出現 `Constructor` 條目）：
+   - 類別無任何 public 建構子（`static` 類別，或建構子皆為 `private` / `protected`）
+   - 類別在原始碼中未宣告任何建構子（只有編譯器產生的隱含無參數建構子）—— 該建構子沒有對應原始碼行，任何建立 SUT 的測試都已走過它，另寫測試只是噪音
+
 ### Step 4：決定 requiredSkills
 
 根據分析結果決定需要載入的 Skills。`requiredSkills` 輸出的是**識別碼**，Writer 依識別碼對應的 `.agents/skills/<name>/SKILL.md` 路徑載入，Analyzer **本身不載入任何技術型 Skill**：
@@ -192,7 +211,7 @@ permissionMode: bypassPermissions
 
 ### Step 6：產出建議測試案例
 
-根據被測類別的方法分析，產出中文三段式命名的建議測試案例清單。
+根據被測類別的方法分析，產出中文三段式命名的建議測試案例清單。**Step 3.5 列管的建構子場景一併納入本清單**，不得遺漏。
 
 命名格式：`方法_情境_預期`
 
@@ -265,6 +284,8 @@ permissionMode: bypassPermissions
     "lifecyclePattern": "before-after"
   },
   "suggestedTestScenarios": [
+    "Constructor_依賴齊備_應可正常建立",
+    "Constructor_員工儲存庫為null_應拋出ArgumentNullException",
     "ValidateEmployee_有效員工資料_應回傳驗證通過",
     "ValidateEmployee_名字為空_應回傳驗證失敗",
     "ValidateEmployee_薪資為負數_應回傳驗證失敗",
@@ -323,9 +344,10 @@ permissionMode: bypassPermissions
 
 1. **場景總數對齊**：計算 `methodScenarioCounts` 所有值的加總，確認等於 `suggestedTestScenarios` 陣列的長度
    - 若不一致：補足遺漏場景，或修正 `methodScenarioCounts` 中的數字，以實際 `suggestedTestScenarios` 為準
-2. 確認 `projectContext.targetFramework`、`projectContext.solutionPath`、`projectContext.testProjectPath` 均不為空
-3. 確認 `targetClasses[].className` 不為空
-4. **Validator 類型額外驗證**：
+2. **建構子場景列管檢查**（Step 3.5 對帳）：`suggestedTestScenarios` 中首段為 `Constructor` 的條目數必須 **≥ 被測類別在原始碼中明確宣告的 public 建構子數量**，且 `methodScenarioCounts` 必含 `Constructor` 條目、數值與之相等。符合 Step 3.5 第 5 點兩個例外之一的類別則兩者皆不得出現。`Constructor` 不計入 `methodCount`，兩者本來就不要求相等。**不得為了讓數字看起來一致而刪除建構子場景。**
+3. 確認 `projectContext.targetFramework`、`projectContext.solutionPath`、`projectContext.testProjectPath` 均不為空
+4. 確認 `targetClasses[].className` 不為空
+5. **Validator 類型額外驗證**：
    - `validatorInfo.validBaseObjectHint` 不為空，且每個有約束的屬性都有對應值
    - `validBaseObjectHint` 中的每個屬性值確實滿足 `rules[]` 中對應的 `validations[]`
 
@@ -369,6 +391,7 @@ permissionMode: bypassPermissions
   "methodCount": 3,
   "scenarioCount": 10,
   "methodScenarioCounts": {
+    "Constructor": 2,
     "GetById": 3,
     "Create": 4,
     "Delete": 3
@@ -394,7 +417,7 @@ permissionMode: bypassPermissions
   "targetType": "validator",
   "methodCount": 5,
   "scenarioCount": 20,
-  "methodScenarioCounts": { "CustomerId": 3, "Items": 5, "CrossField_TotalAmount_Items": 4, "...": "..." },
+  "methodScenarioCounts": { "Constructor": 2, "CustomerId": 3, "Items": 5, "CrossField_TotalAmount_Items": 4, "...": "..." },
   "requiredSkills": ["tunit-fundamentals"],
   "tunitFeatureRequirements": { "basicTest": true, "arguments": true, "matrixTests": false },
   "analysisFilePath": "tests/MyProject.Core.Tests/.orchestrator/analysis/OrderValidator.analysis.json",
@@ -427,3 +450,4 @@ permissionMode: bypassPermissions
 14. **輸出格式為緊湊 JSON** — 寫入交接檔案時使用 compact JSON（不加縮排、不加換行），以最小化 Writer 輸入 token
 11. **matrixCandidate 與 suggestedTestScenarios 互斥原則** — 當一個方法的 `matrixCandidate: true` 時，`suggestedTestScenarios` 中**只應包含一個 `[MethodDataSource]` 批次場景**（涵蓋所有組合），**不得同時列出個別組合案例**。例如，`CalculateAnnualFee` 若有 3 × 2 = 6 組合，只應列「CalculateAnnualFee_三種MembershipType與兩種isRenewal組合_應正確計算對應年費」，不應再逐一列出「CalculateAnnualFee_Basic且非續約_應回傳0」等 6 個個別案例。兩種方式並列會導致 Writer 重複實作，產生 12 個測試覆蓋相同 6 個邏輯案例。邊界/例外場景（如「CalculateAnnualFee_無效MembershipType_應拋出ArgumentOutOfRangeException」）不在此限，仍應個別列出
 12. **suggestedTestScenarios 命名禁止引用測試機制** — `suggestedTestScenarios` 的命名必須描述**預期行為**，**不得引用測試實作機制**（例如 `MethodDataSource`、`Arguments`、`ClassDataSource` 等）。錯誤範例：「BorrowBookAsync_三種MembershipType成功借閱_應以MethodDataSource驗證借閱期限」；正確範例：「BorrowBookAsync_依MembershipType借閱_借閱期限與MaxRenewals應符合會員等級規則」。第三段（預期結果）應描述業務邏輯的預期行為，而非測試框架的實作方式
+15. **建構子一律列管** — 所有 `targetType`（含走 Validator 專用分析流程者）都必須執行 Step 3.5，`suggestedTestScenarios` 必含 `Constructor_` 開頭的場景，例外只有 Step 3.5 第 5 點的兩種（無 public 建構子；原始碼未宣告任何建構子）。**「建構子沒有邏輯」「只是委派」都不是略過的理由。**

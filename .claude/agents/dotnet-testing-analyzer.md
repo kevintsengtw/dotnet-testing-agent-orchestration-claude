@@ -174,7 +174,9 @@ permissionMode: bypassPermissions
 
    > **禁止只列失敗分支**：產出後自我比對 —— `crossFieldRules[]` 與 `customMethods[]` 的條目數 × 2 應為這兩類場景數的下限。若少於此數，代表有規則只驗了一半。
 
-> **重要**：Validator 類型不需要走 Step 3 的方法簽章分析（因為 Validator 的邏輯在建構子規則中，不在公開方法中）。但仍需執行 Step 2（建構子依賴分析）來識別 `TimeProvider` 等注入。
+7. **建構子場景列管（強制，不得因走 Validator 專用流程而略過）**：Validator 的 `suggestedTestScenarios` **全部**來自本步驟的規則展開，建構子沒有其他進入管道。**必須依 Step 2.5 列出本 Validator 在原始碼中明確宣告的所有 public 建構子，各產出至少一個 `Constructor_` 開頭的場景**——包含 `public OrderValidator() : this(TimeProvider.System)` 這類無參數、只委派給另一個建構子的建構子（它是實際會被執行的程式碼路徑）。產出後自我比對：`Constructor_` 開頭的場景數 **≥ public 建構子數**。
+
+> **重要**：Validator 類型不需要走 Step 3 的方法簽章分析（因為 Validator 的邏輯在建構子規則中，不在公開方法中）。但仍需執行 Step 2（建構子依賴分析）來識別 `TimeProvider` 等注入，**以及 Step 2.5（建構子場景強制列管）**——validator 的場景全部來自 Step 1.5 的規則展開，建構子若不由 Step 2.5 列管就沒有任何進入場景的管道。
 
 ### Step 2：分析建構子依賴
 
@@ -188,6 +190,26 @@ permissionMode: bypassPermissions
 | `IValidator<T>` | `specialHandling: "validation"` | 需要 FluentValidation 測試 |
 | `ILogger<T>` | `needsMock: true, isLogger: true` | 通常用 `NullLogger` 或 Mock |
 | 具體類別（非介面） | `needsMock: false` | 可能需要 Test Double 或直接建構 |
+
+### Step 2.5：建構子場景強制列管（強制規則，所有 `targetType` 一律執行）
+
+Step 2 只辨識建構子的**依賴**，不產生任何場景。本步驟負責把**建構子本身**列入待測範圍。這是強制規則，不容 run 間判斷差異 —— 沒有這一步，無 null guard 的 public 建構子會整個掉出待測範圍（下游 Writer 的建構子規則只涵蓋有 null guard 的參數）。
+
+1. **列出原始碼中明確宣告的所有 public 建構子**，一個都不得略過，含：
+   - 明確宣告的無參數建構子
+   - **只委派給其他建構子的建構子**（如 `OrderValidator() : this(TimeProvider.System)`）—— 委派本身就是要被執行的程式碼路徑，**不得以「沒有自己的邏輯」為由略過**
+   - 多載建構子（每個多載各自列管）
+
+   > **不列管編譯器產生的隱含無參數建構子**：類別若在原始碼中**完全沒有宣告任何建構子**（如 `public class TemperatureConverter { ... }`），那個隱含建構子沒有對應的原始碼行，任何建立 SUT 的測試都已經走過它，另寫一個建構子測試只是噪音。此類別**不產出建構子場景**。
+2. **每個 public 建構子至少產出一個 `suggestedTestScenarios` 條目**，首段固定為 `Constructor`：
+   - 無參數：`Constructor_無參數_應可正常建立`
+   - 有參數多載：`Constructor_提供{中文參數描述}_應可正常建立`（如 `Constructor_提供時間提供者_應可正常建立`）
+3. **有 null guard 的參數各加一個防禦場景**：建構子含 `?? throw new ArgumentNullException` 或 `ArgumentNullException.ThrowIfNull(x)` 時，每個受防禦參數產出 `Constructor_{中文參數描述}為null_應拋出ArgumentNullException`。**參數名依「重要原則 3」譯為中文**（`timeProvider` → 時間提供者、`orderRepository` → 訂單儲存庫），不得直接嵌入英文參數名。
+4. **`methodScenarioCounts` 必須含 `"Constructor"` 條目**，其值等於本步驟產出的場景總數。`Constructor` **不計入 `methodCount`**（`methodCount` 的定義不變）。
+5. **兩個例外**（符合任一即不產出建構子場景，`methodScenarioCounts` 也不得出現 `Constructor` 條目）：
+   - 類別無任何 public 建構子（`static` 類別，或建構子皆為 `private` / `protected`）
+   - 類別在原始碼中未宣告任何建構子（只有編譯器產生的隱含無參數建構子，見第 1 點）
+6. **採用模式（`scenarioSource === "adopted"`）跳過本步驟**：場景一律以使用者提供的為準，不強制追加。若 `scenarioSpecs` 未涵蓋建構子，那是使用者的範圍選擇，不視為缺漏。
 
 ### Step 3：分析方法簽章
 
@@ -341,6 +363,8 @@ permissionMode: bypassPermissions
     }
   },
   "suggestedTestScenarios": [
+    "Constructor_依賴齊備_應可正常建立",
+    "Constructor_訂單儲存庫為null_應拋出ArgumentNullException",
     "ProcessOrder_訂單有效且付款成功_應回傳成功結果",
     "ProcessOrder_訂單為null_應拋出ArgumentNullException",
     "ProcessOrder_付款失敗_應不發送確認Email",
@@ -418,6 +442,10 @@ permissionMode: bypassPermissions
    - `validatorInfo.validBaseObjectHint` 不為空，且每個有約束的屬性都有對應值
    - `validBaseObjectHint` 中的每個屬性值確實滿足 `rules[]` 中對應的 `validations[]`（例如：Length(2,50) → 值長度在 2-50 之間）
 
+6. **建構子場景列管檢查**（Step 2.5 對帳）：`suggestedTestScenarios` 中首段為 `Constructor` 的條目數必須 **≥ 被測類別在原始碼中明確宣告的 public 建構子數量**，且 `methodScenarioCounts` 必須含 `Constructor` 條目、數值與之相等。符合 Step 2.5 第 5 點兩個例外之一的類別（無 public 建構子，或原始碼中未宣告任何建構子）則兩者皆不得出現。**採用模式（`scenarioSource === "adopted"`）跳過本項。**
+   - `Constructor` 是 `methodScenarioCounts` 的合法 key 但**不在 `methodsToTest` 中**，因此第 3 項的 `methodCount` 不因本項增加——兩者本來就不要求相等（validator 類型亦然）。
+   - **不得為了讓數字看起來一致而刪除建構子場景**；不一致時一律以「補足或修正計數」的方向修正。
+
 > 自我驗證失敗時，原地修正 JSON，不要跳過或忽略不一致。
 
 ---
@@ -458,6 +486,7 @@ permissionMode: bypassPermissions
   "methodCount": 3,
   "scenarioCount": 12,
   "methodScenarioCounts": {
+    "Constructor": 2,
     "ProcessOrder": 5,
     "ValidateOrder": 4,
     "CancelOrder": 3
@@ -476,7 +505,7 @@ permissionMode: bypassPermissions
   "targetType": "validator",
   "methodCount": 8,
   "scenarioCount": 32,
-  "methodScenarioCounts": { "CustomerId": 3, "Items": 5, "CrossField_ProcessedAt_CreatedAt": 4, "...": "..." },
+  "methodScenarioCounts": { "Constructor": 2, "CustomerId": 3, "Items": 5, "CrossField_ProcessedAt_CreatedAt": 4, "...": "..." },
   "analysisFilePath": "tests/MyProject.Core.Tests/.orchestrator/analysis/OrderValidator.analysis.json",
   "projectContext": {
     "targetFramework": "net9.0",
@@ -508,4 +537,5 @@ permissionMode: bypassPermissions
 5. **沿用既有 pattern** — 如果測試專案已有 AutoFixture 自訂 Attribute 或基礎設施，必須在 `existingTestInfrastructure` 中如實記錄，Writer 才有依據沿用而不重新發明
 6. **目標類型決定分析流程** — `targetType === "validator"` 時走 Step 1.5 的 Validator 專用分析流程，跳過 Step 3（方法簽章分析）；`targetType === "legacy"` 時走 Step 1.5 的 Legacy Code 專用分析流程，`suggestedTestScenarios` 命名必須基於靜態資料的實際值（Characterization Test）
 7. **Legacy Code 場景命名** — 當 `targetType === "legacy"` 時，`suggestedTestScenarios` 中的每個測試命名**必須反映靜態資料的實際值和行為**。禁止產出「理想化邊界條件」的命名（如「總消費超過500_應回傳true」但靜態資料中無此使用者）。每個場景命名必須與 Assert 斷言一致。
-8. **採用模式不取代技術分析** — `scenarioSource === "adopted"` 只改變「場景從哪來、涵蓋哪些方法」，不減省 Step 2（依賴分析）、Step 3.1/3.2/3.3（IFileSystem／TimeProvider／Complex Model 深度分析）、Step 5（既有基礎設施掃描）。採用的場景提供的是「測什麼、期望什麼」，實際的依賴、回傳型別、行為細節仍由技術分析與下游 Writer 讀原始碼取得——採用不是省略分析的理由。
+8. **建構子一律列管** — 所有 `targetType`（含走專用分析流程的 validator / legacy）都必須執行 Step 2.5，`suggestedTestScenarios` 必含 `Constructor_` 開頭的場景，例外只有 Step 2.5 第 5 點的兩種（無 public 建構子；原始碼未宣告任何建構子）。**「建構子沒有邏輯」「只是委派」都不是略過的理由。**
+9. **採用模式不取代技術分析** — `scenarioSource === "adopted"` 只改變「場景從哪來、涵蓋哪些方法」，不減省 Step 2（依賴分析）、Step 3.1/3.2/3.3（IFileSystem／TimeProvider／Complex Model 深度分析）、Step 5（既有基礎設施掃描）。採用的場景提供的是「測什麼、期望什麼」，實際的依賴、回傳型別、行為細節仍由技術分析與下游 Writer 讀原始碼取得——採用不是省略分析的理由。

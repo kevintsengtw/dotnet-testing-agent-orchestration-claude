@@ -2,6 +2,98 @@
 
 所有重要變更都記錄於此。格式參考 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [v1.7.0] - 2026-09-04
+
+unit 與 tunit 兩套工作流程補上**建構子場景強制列管**。起因是 lite-lab 的對照 benchmark 暴露一個規則缺口：
+現行三條建構子相關規則（Analyzer Step 2 依賴分析、Writer 撰寫規範、Reviewer 檢核）
+沒有一條要求「所有 public 建構子都要有測試」，只涵蓋**有 `?? throw new ArgumentNullException`
+防禦**的參數。結果是 `OrderValidator() : this(TimeProvider.System)` 這類無參數、無 null guard、
+只委派給另一個建構子的 public 建構子完全掉出待測範圍——本工作區 5 份留存產出物
+（exp-08 與 agent-autonomy-validation 四輪）的建構子測試命中數**全部為 0**。
+
+tunit 的缺口更大：**Writer 端原本完全沒有建構子規則**，連 null guard 的都沒有，只有 Reviewer 有。
+
+**Analyzer → Writer → Executor → Reviewer 的四階段協作、hooks 與錯誤代碼一律未變更；
+integration 與 aspire 兩套工作流程未動**（兩者測的是 HTTP 端點與 Aspire Resource，
+建構子列管不適用）。
+
+發現紀錄見 `docs/comparison/coverage-gap-finding-from-lite-lab.md`，
+修改計畫與完整驗證紀錄見 `docs/comparison/unit-constructor-scenario-plan.md`。
+
+### 新增
+
+- **Analyzer 新增 Step 2.5「建構子場景強制列管」**：所有 `targetType` 一律執行，列出原始碼中
+  **明確宣告**的所有 public 建構子（含只委派給其他建構子者、每個多載），各產出至少一個首段為
+  `Constructor` 的場景；有 null guard 的參數各加一個防禦場景，參數名依命名規範譯為中文。
+  `methodScenarioCounts` 必含 `Constructor` 條目，但**不計入** `methodCount`。
+
+  落點必須在 Analyzer 而非只補 Writer：本工作區是 1+4 架構，Writer 的場景來源是
+  `suggestedTestScenarios`；且 validator 目標跳過 Step 3 方法簽章分析、場景全部來自
+  Step 1.5 的規則展開，建構子原本沒有任何進入場景的管道。
+
+- **兩個例外**：類別無任何 public 建構子（`static`，或建構子皆非 public）；
+  類別在原始碼中**未宣告任何建構子**（只有編譯器產生的隱含無參數建構子）。後者若不排除，
+  `TemperatureConverter`、`LegacyReportGenerator` 這類類別會被逼出一個無意義測試，
+  且 Reviewer 對帳會產生假陽性。
+
+- **Reviewer 新增建構子測試覆蓋對帳**，severity 依缺漏來源分流：
+  `suggestedTestScenarios` 有列該場景、測試檔卻沒寫且 `writer-result.deviations` 未記錄理由
+  → `error`（契約違反）；分析報告未列、Reviewer 讀原始碼才發現 → `warning`（覆蓋缺口）。
+  兩者一律列入 `missingTestCases`。
+
+- **`rules/unit-writer-validator.md`** 明文授權建構子場景，避免被該檔「測試方法總數以
+  `suggestedTestScenarios` 為基準（上限 150%）」的規定排擠。
+
+- **tunit 同步補上同一條規則**，措辭依 tunit 的差異重寫、未照抄 unit：
+  - `tunit-analyzer` 新增 **Step 3.5**（`Step 2.5` 已被「目標類型識別」佔用）、Step 6.5 對帳、
+    重要原則第 15 條；Validator 分支明訂不得略過
+  - `tunit-writer` 新增 **3.10.5 建構子測試** —— 此前 tunit Writer **沒有任何**建構子規則。
+    規則明講「測的是**被測類別**的建構子」，與測試類別用 `[Before(Test)]` / `[After(Test)]`
+    的生命週期區分開
+  - `tunit-reviewer` 4g 覆蓋率表新增建構子測試覆蓋，嚴重度分流對應為
+    **FAIL**（已列管卻沒寫且無 `deviations`）／**WARN**（分析報告未列、讀原始碼才發現），
+    因 tunit Reviewer 用 PASS／WARN／FAIL 而非 `error`／`warning`／`suggestion`
+
+### 修正
+
+- **Writer 建構子命名範本與契約層自相矛盾**：`dotnet-testing-writer.md` 原規定
+  `Constructor_{參數名稱}為null_應拋出ArgumentNullException`，但同檔契約層明列參數名屬
+  「識別字」必須譯為中文，Reviewer 更以「第 2 段出現連續 3 個以上英文字母」機械判定、違反即
+  `error`。照原文寫出的 `Constructor_timeProvider為null_...` 會被自家 Reviewer 判 error。
+  範本改為 `{中文參數描述}`。此缺陷與本次新增無關、在 `master` 上獨立存在。
+
+- **`docs/comparison/README.md` 還原程序**：原註解宣稱 `git clean -fd` 會清除
+  `.orchestrator/`，實際上該目錄被 `.gitignore` 擋著清不掉，殘留會污染下一次實驗的起始條件。
+  補上 `fs.rmSync` 與驗證指令，並註明 `experiments/*/prompt.md` 是當時的執行記錄、
+  不是提示詞格式範本（觸發格式以根 `README.md` 為準）。
+
+### 驗證
+
+八條端到端驗證全部通過（unit 五條、tunit 三條），記錄於 `docs/comparison/verification/ctor-scenario/`。
+全部由使用者於乾淨 session 手動執行並貼回原始回覆，Claude 僅出題、檢查、記錄、還原；
+提示詞零引導，回報數字一律經磁碟核對。
+
+| # | 標的 | 驗什麼 | 結果 |
+| --- | --- | --- | --- |
+| E2E-01 | `OrderValidator`（net10、validator） | 規則生效 + 覆蓋率 | 2 個建構子場景與測試齊備；30/30 綠、Reviewer A |
+| E2E-02 | `WeatherAlertService`（net10、service） | null guard 分支 + 中文參數名 | 3 個場景（1 建立 + 2 防禦）；36/36 綠、0 命名 error |
+| E2E-04 | 刪掉 E2E-01 的建構子測試後重審 | `error` 分支 | A → C+；`missingTestCases` 精確命中 |
+| E2E-05 | 另從 analysis 移除建構子場景後重審 | `warning` 分支 | 判 `warning` 並明載降級理由 |
+| E2E-03 | `TemperatureConverter`（net10、未宣告建構子） | 規則**不得**過度生效 | 0 個建構子場景、Reviewer A+ 無假陽性 |
+| T-01 | `LibraryMemberValidator`（tunit／net9、委派建構子） | tunit 規則生效 | 2 個建構子場景與對應 `[Test]`；28/28 綠 |
+| T-02 | `LibraryMemberService`（tunit／net9、3 個 null guard） | tunit null guard 分支 | 4 個場景（1 建立 + 3 防禦）、中文參數描述；42/42 綠 |
+| T-03 | `BookCatalog`（tunit／net9、未宣告建構子） | tunit **不得**過度生效 | 0 個建構子場景；Writer 主動記錄「符合略過規則」、Reviewer 標 WARN 而非 FAIL |
+
+`OrderValidator` 的 line coverage 由 **88.57%**（uncovered `[17,18,19,96]`）提升至
+**97.14%**（uncovered `[96]`）；`[96]` 是被 `.When()` 短路的 `return true;`，判為 uncoverable。
+正向流程除 T-03 有 2 次與建構子無關的修正輪（`%` 非法識別字、`BeEquivalentTo` 誤用於 bool／decimal）外，其餘皆 0 修正輪、測試全綠。覆蓋率量測為一次性手動執行，**未接入工作流程**。
+
+> **已知限制**：八條各跑一次，樣本數 1。同一份測試檔在兩次 Reviewer 執行中，`[Theory]`
+> 合併問題一次判 `suggestion`、一次判 `error`，故所有判準都設在機制層
+> （場景清單、測試方法、覆蓋行號、`issues[].severity` 明細），不採用 `overallScore`。
+
+---
+
 ## [v1.6.0] - 2026-09-01
 
 單元測試工作流程的架構調整：把 `dotnet-testing-*` 共用技術 Skills 從「法典」改為「可選參考」，

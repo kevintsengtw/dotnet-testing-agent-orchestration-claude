@@ -520,6 +520,16 @@ private LibraryMember CreateValidMember() => new LibraryMember
 
 **重要**：`using` 陳述式不需要包含 `AwesomeAssertions`，因為 FluentValidation TestHelper 的 `ShouldHaveValidationErrorFor` 本身就是斷言語法。
 
+#### 3.10.5 建構子測試（被測類別的建構子）
+
+分析報告 `suggestedTestScenarios` 中**首段為 `Constructor` 的場景必須全數撰寫**，不得以「建構子沒有邏輯」或「只是委派給另一個建構子」為由略過。若確有理由略過，**必須**記錄於 `writer-result.deviations`。
+
+> ⚠️ 這裡測的是**被測類別**的建構子，不是測試類別的生命週期。測試類別本身一律用 `[Before(Test)]` / `[After(Test)]`（見 3.4），兩者不衝突。
+
+- **建立成功場景**：Act 建立 SUT，Assert 斷言建立成功（如 `sut.Should().NotBeNull()`）
+- **null guard 場景**（建構子有 `?? throw new ArgumentNullException` 或 `ArgumentNullException.ThrowIfNull(x)` 防禦時，每個受防禦參數各一個）：命名 `Constructor_{中文參數描述}為null_應拋出ArgumentNullException`。**參數名必須譯為中文**（`timeProvider` → 時間提供者）——寫成 `Constructor_timeProvider為null_...` 會被 Reviewer 以「英文識別字入名」判為問題；斷言中的 `.WithParameterName("timeProvider")` 則保留真實參數名。
+- 測試方法同樣是 `async Task`、同樣走 AAA、同樣放在 `#region Constructor` 內。
+
 #### 3.11 程式碼組織
 
 使用 `#region 方法名稱` / `#endregion` 組織測試方法群組（按被測試方法分組），不使用 `//-----` 註解分割線。每個 region 對應一個被測試方法的所有測試案例。

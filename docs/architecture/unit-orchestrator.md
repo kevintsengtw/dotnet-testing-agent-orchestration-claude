@@ -57,6 +57,8 @@ Orchestrator 在啟動 Analyzer 之前，先以 Glob 檢查測試專案目錄下
 
 Analyzer 讀取被測試目標的原始碼，識別類別類型與依賴，產出結構化的分析 JSON 報告（交接檔案）。
 
+被測類別**明確宣告的每個 public 建構子**一律列成測試情境（含只委派給其他建構子的無參數建構子），有 null guard 的參數各再加一個防禦情境；`methodScenarioCounts` 因此會有 `Constructor` 條目。未宣告任何建構子、或無 public 建構子的類別不列管。
+
 **三種目標類別類型：**
 
 | 類型                 | 特徵                                                          | 特殊處理                                |
