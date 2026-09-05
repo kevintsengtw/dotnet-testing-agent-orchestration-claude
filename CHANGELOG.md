@@ -2,6 +2,45 @@
 
 所有重要變更都記錄於此。格式參考 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [v1.7.1] - 2026-09-05
+
+修正 tunit Analyzer 產出的場景名稱殘留英文識別字。tunit 的 Writer（重要原則 7）與 Reviewer
+（命名規範表）早有「情境與預期段出現連續 3 個以上英文字母即違反、值與型別保留、識別字譯中文」
+的機械判準，**唯獨 Analyzer 只有「重要原則 5：中文三段式命名」一句話、沒有判準**。
+場景名稱是 Writer 的直接輸入，源頭殘留會一路帶到測試方法名，Reviewer 每跑一次就標一次 WARN——
+v1.7.0 驗證批次的 tunit T-02 即出現 5 個含 `Email` 的方法名，Reviewer 明確指出根因在 Analyzer。
+
+**只動 `dotnet-testing-advanced-tunit-analyzer.md` 一個檔案；四階段協作、hooks、錯誤代碼、
+其餘三套工作流程一律未變更。**
+
+### 修正
+
+- **tunit Analyzer 移植 unit Analyzer 的命名判準**：重要原則 5 補上機械判準、白名單
+  （例外型別名、列舉型別與列舉值、語言字面值、型別成員值）、違反清單（參數名、屬性名、欄位名）
+  與「值與型別保留、識別字譯中文」的分界原則，並註明所有 `targetType` 一律適用
+- **Step 6**：產出場景名稱的當下即套用判準，**不得留給 Writer 轉換**
+- **Step 6.5**：新增第 3 項機械對帳——寫入交接檔案前逐一場景名掃描，違反者就地改為中文
+- **重要原則 11、12 的範例自身違規**：`isRenewal` → 續約狀態、`MaxRenewals` → 最大續借次數；
+  `MembershipType` 屬列舉型別、在白名單內，維持原文
+
+### 驗證
+
+一條端到端驗證通過，記錄於 `docs/comparison/verification/scenario-naming/`。標的、測試專案、
+提示詞與 v1.7.0 的 tunit T-02 **逐字相同**，故可直接對照：
+
+| | T-02（v1.7.0，修正前） | T-01（修正後） |
+| --- | --- | --- |
+| `suggestedTestScenarios` 含 `Email` | 5 | **0** |
+| 測試方法名含 `Email` | 5 | **0** |
+| Reviewer 命名面向 | ⚠️ WARN（合規率約 88%） | ✅ PASS（**100%**） |
+| 白名單（`ArgumentNullException`、`KeyNotFoundException`、`為null`…） | — | **全數保留原文**，未被過度中文化 |
+| 建構子場景（v1.7.0 行為） | 4 | 4（無退化） |
+| 執行 | 42/42 綠 | 53/53 綠、0 修正輪 |
+
+> **已知限制**：樣本數 1。同一條規則在 unit 側已隨 v1.6.0 實測多輪，本次是移植而非新設計。
+
+---
+
 ## [v1.7.0] - 2026-09-04
 
 unit 與 tunit 兩套工作流程補上**建構子場景強制列管**。起因是 lite-lab 的對照 benchmark 暴露一個規則缺口：

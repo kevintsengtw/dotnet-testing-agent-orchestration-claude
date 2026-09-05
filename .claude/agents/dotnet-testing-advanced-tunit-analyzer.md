@@ -215,6 +215,8 @@ Step 3 的「建構子依賴」只辨識需要 Mock 的 interface 清單，**不
 
 命名格式：`方法_情境_預期`
 
+**每產出一個場景名稱，立刻依「重要原則 5」的機械判準檢查情境段與預期段**：出現連續 3 個以上的英文字母時，對照白名單判定是「值與型別」（保留）或「識別字」（必須譯為中文）。**不得把英文識別字留給 Writer 處理** —— 場景名稱是 Writer 的直接輸入，源頭殘留會一路帶到測試方法名並被 Reviewer 判為問題。
+
 ---
 
 ## 回傳格式
@@ -345,9 +347,10 @@ Step 3 的「建構子依賴」只辨識需要 Mock 的 interface 清單，**不
 1. **場景總數對齊**：計算 `methodScenarioCounts` 所有值的加總，確認等於 `suggestedTestScenarios` 陣列的長度
    - 若不一致：補足遺漏場景，或修正 `methodScenarioCounts` 中的數字，以實際 `suggestedTestScenarios` 為準
 2. **建構子場景列管檢查**（Step 3.5 對帳）：`suggestedTestScenarios` 中首段為 `Constructor` 的條目數必須 **≥ 被測類別在原始碼中明確宣告的 public 建構子數量**，且 `methodScenarioCounts` 必含 `Constructor` 條目、數值與之相等。符合 Step 3.5 第 5 點兩個例外之一的類別則兩者皆不得出現。`Constructor` 不計入 `methodCount`，兩者本來就不要求相等。**不得為了讓數字看起來一致而刪除建構子場景。**
-3. 確認 `projectContext.targetFramework`、`projectContext.solutionPath`、`projectContext.testProjectPath` 均不為空
-4. 確認 `targetClasses[].className` 不為空
-5. **Validator 類型額外驗證**：
+3. **場景命名英文識別字檢查**（重要原則 5 對帳，逐一場景名執行）：對 `suggestedTestScenarios` 的每個名稱，取第 2 段（情境）與第 3 段（預期），掃出所有**連續 3 個以上的英文字母**片段，逐一判定屬「值與型別」（例外型別名、列舉型別與列舉值、語言字面值、型別成員值 → 放行）或「識別字」（參數名、屬性名、欄位名 → 違反）。**發現違反一律就地改為中文後才寫入交接檔案**，不得留給 Writer 轉換。
+4. 確認 `projectContext.targetFramework`、`projectContext.solutionPath`、`projectContext.testProjectPath` 均不為空
+5. 確認 `targetClasses[].className` 不為空
+6. **Validator 類型額外驗證**：
    - `validatorInfo.validBaseObjectHint` 不為空，且每個有約束的屬性都有對應值
    - `validBaseObjectHint` 中的每個屬性值確實滿足 `rules[]` 中對應的 `validations[]`
 
@@ -440,7 +443,13 @@ Step 3 的「建構子依賴」只辨識需要 Mock 的 interface 清單，**不
 2. **被測類別優先** — 從被測類別的結構開始分析，再判斷 TUnit 功能需求
 3. **TUnit 功能精準判斷** — `tunitFeatureRequirements` 的每個布林值必須基於實際分析
 4. **條件載入 tunit-advanced** — 只有存在進階功能需求時才將 `tunit-advanced` 加入 `requiredSkills`
-5. **中文三段式命名** — `suggestedTestScenarios` 必須使用中文三段式格式（`方法_情境_預期`）
+5. **中文三段式命名** — `suggestedTestScenarios` 必須使用中文三段式格式（`方法_情境_預期`），使用中文描述情境與預期結果
+   - **情境與預期段不得嵌入英文屬性名、參數名或欄位名**（如 `Email`、`ProductName`、`isRenewal`、`MaxRenewals`）。需指涉時一律譯為中文（電子郵件、產品名稱、續約狀態、最大續借次數）。
+   - **判準（可機械判斷，逐一場景名執行）**：取場景名的**第 2 段（情境）與第 3 段（預期）**，若出現**連續 3 個以上的英文字母**，依下列「白名單」與「違反」兩類判定。
+   - **白名單（得保留原文）**：程式碼中的**值與型別** —— 例外型別名（`應拋出ArgumentNullException`）、列舉型別與列舉值（`三種MembershipType組合`、`狀態非Active`、`狀態非OnLoan`）、語言字面值（`為null`、`應為True`、`應回傳false`）、型別成員值（`應回傳TimeSpanZero`）。中文化會失去與程式碼的對應，故不視為違反。
+   - **違反（必須改）**：程式碼中的**識別字** —— 參數名（`timeProvider` → 時間提供者、`isRenewal` → 續約狀態）、屬性名（`Email` → 電子郵件、`ProductName` → 產品名稱、`MaxRenewals` → 最大續借次數）、欄位名。
+   - **分界原則**：程式碼中的**值與型別**保留原文，**識別字**（參數名、屬性名、欄位名）必須譯為中文。
+   - 此規則對**所有** `targetType` 一律適用，Validator 專用分析流程（Step 2.5）與 Step 3.5 的建構子場景範本亦不得例外。
 6. **完整掃描既有基礎設施** — 測試專案中既有的 TUnit 測試、NuGet 套件、生命週期模式必須被識別
 7. **遷移場景深度分析** — 從 xUnit/NUnit 遷移時，必須提供完整的轉換清單（屬性、簽章、生命週期）
 8. **matrixCandidate 辨識** — 多參數方法（特別是枚舉 × 數值的組合）應標記為 Matrix 測試候選（實際實作使用 `[MethodDataSource]` 搭配巢狀迴圈，因 `[MatrixDataSource]`/`[Matrix]` 在 TUnit 0.6.123 中不存在）
@@ -448,6 +457,6 @@ Step 3 的「建構子依賴」只辨識需要 Mock 的 interface 清單，**不
 10. **migrationSource 判定範圍** — `migrationSource` 的值必須**僅依據測試專案本身的 `.csproj` PackageReference** 來判斷。若 `.csproj` 中包含 `xunit` 套件引用則為 `"xunit"`，包含 `NUnit` 則為 `"nunit"`，僅包含 `TUnit` 或無任何測試框架引用則為 `null`。**不得**因為工作區其他目錄（例如 `migration_source/`）中存在 xUnit 或 NUnit 測試檔案而將 `migrationSource` 設為非 null 值
 13. **Validator targetType 決定分析流程** — `targetType === "validator"` 時走 Step 2.5 的 Validator 專用分析流程，**跳過** Step 3 的方法簽章部分（只做依賴分析），`requiredSkills` 必須包含 `tunit-fundamentals`
 14. **輸出格式為緊湊 JSON** — 寫入交接檔案時使用 compact JSON（不加縮排、不加換行），以最小化 Writer 輸入 token
-11. **matrixCandidate 與 suggestedTestScenarios 互斥原則** — 當一個方法的 `matrixCandidate: true` 時，`suggestedTestScenarios` 中**只應包含一個 `[MethodDataSource]` 批次場景**（涵蓋所有組合），**不得同時列出個別組合案例**。例如，`CalculateAnnualFee` 若有 3 × 2 = 6 組合，只應列「CalculateAnnualFee_三種MembershipType與兩種isRenewal組合_應正確計算對應年費」，不應再逐一列出「CalculateAnnualFee_Basic且非續約_應回傳0」等 6 個個別案例。兩種方式並列會導致 Writer 重複實作，產生 12 個測試覆蓋相同 6 個邏輯案例。邊界/例外場景（如「CalculateAnnualFee_無效MembershipType_應拋出ArgumentOutOfRangeException」）不在此限，仍應個別列出
-12. **suggestedTestScenarios 命名禁止引用測試機制** — `suggestedTestScenarios` 的命名必須描述**預期行為**，**不得引用測試實作機制**（例如 `MethodDataSource`、`Arguments`、`ClassDataSource` 等）。錯誤範例：「BorrowBookAsync_三種MembershipType成功借閱_應以MethodDataSource驗證借閱期限」；正確範例：「BorrowBookAsync_依MembershipType借閱_借閱期限與MaxRenewals應符合會員等級規則」。第三段（預期結果）應描述業務邏輯的預期行為，而非測試框架的實作方式
+11. **matrixCandidate 與 suggestedTestScenarios 互斥原則** — 當一個方法的 `matrixCandidate: true` 時，`suggestedTestScenarios` 中**只應包含一個 `[MethodDataSource]` 批次場景**（涵蓋所有組合），**不得同時列出個別組合案例**。例如，`CalculateAnnualFee` 若有 3 × 2 = 6 組合，只應列「CalculateAnnualFee_三種MembershipType與兩種續約狀態組合_應正確計算對應年費」，不應再逐一列出「CalculateAnnualFee_Basic且非續約_應回傳0」等 6 個個別案例。兩種方式並列會導致 Writer 重複實作，產生 12 個測試覆蓋相同 6 個邏輯案例。邊界/例外場景（如「CalculateAnnualFee_無效MembershipType_應拋出ArgumentOutOfRangeException」）不在此限，仍應個別列出
+12. **suggestedTestScenarios 命名禁止引用測試機制** — `suggestedTestScenarios` 的命名必須描述**預期行為**，**不得引用測試實作機制**（例如 `MethodDataSource`、`Arguments`、`ClassDataSource` 等）。錯誤範例：「BorrowBookAsync_三種MembershipType成功借閱_應以MethodDataSource驗證借閱期限」；正確範例：「BorrowBookAsync_依MembershipType借閱_借閱期限與最大續借次數應符合會員等級規則」。第三段（預期結果）應描述業務邏輯的預期行為，而非測試框架的實作方式
 15. **建構子一律列管** — 所有 `targetType`（含走 Validator 專用分析流程者）都必須執行 Step 3.5，`suggestedTestScenarios` 必含 `Constructor_` 開頭的場景，例外只有 Step 3.5 第 5 點的兩種（無 public 建構子；原始碼未宣告任何建構子）。**「建構子沒有邏輯」「只是委派」都不是略過的理由。**
