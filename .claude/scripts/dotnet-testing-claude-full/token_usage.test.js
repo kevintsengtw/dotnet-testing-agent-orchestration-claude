@@ -338,6 +338,131 @@ section("Phase 7b: 跨平台 (POSIX 路徑 glob)");
 }
 
 // ---------------------------------------------------------------------------
+// Phase 8：耗時（取自 subagent transcript 時間窗，取代舊的 hook 注入）
+// ---------------------------------------------------------------------------
+
+section("Phase 8: fmtDuration / collectDurations / renderDurationTable");
+{
+  chk("fmtDuration 秒轉 M:SS", T.fmtDuration(148) === "2:28" && T.fmtDuration(9) === "0:09");
+  chk("fmtDuration 超過一小時轉 H:MM:SS", T.fmtDuration(3725) === "1:02:05");
+  chk("fmtDuration 非數字回 —", T.fmtDuration(null) === "—" && T.fmtDuration(-1) === "—");
+
+  // 專用 fixture：每個 subagent 兩筆 timestamp，時長 = hi − lo
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tu_dur_"));
+  const sid = "11111111-1111-1111-1111-111111111111";
+  const main = path.join(tmp, sid + ".jsonl");
+  const sdir = path.join(tmp, sid, "subagents");
+  fs.mkdirSync(sdir, { recursive: true });
+  const row = (ts) =>
+    JSON.stringify({
+      type: "assistant",
+      isSidechain: true,
+      timestamp: ts,
+      message: { role: "assistant", model: "claude-sonnet-4-6", usage: { input_tokens: 1, output_tokens: 1 } },
+    });
+  fs.writeFileSync(main, row("2026-06-04T10:05:00.000Z") + "\n");
+  const mk = (name, at, desc, t0, t1) => {
+    fs.writeFileSync(path.join(sdir, name + ".meta.json"), JSON.stringify({ agentType: at, description: desc }));
+    fs.writeFileSync(path.join(sdir, name + ".jsonl"), [row(t0), row(t1)].join("\n") + "\n");
+  };
+  mk("a1", "dotnet-testing-analyzer", "analyze", "2026-06-04T10:00:00.000Z", "2026-06-04T10:02:28.000Z");
+  mk("w1", "dotnet-testing-writer", "write A", "2026-06-04T10:03:00.000Z", "2026-06-04T10:12:18.000Z");
+  mk("w2", "dotnet-testing-writer", "write B", "2026-06-04T10:03:00.000Z", "2026-06-04T10:11:02.000Z");
+  mk("e1", "dotnet-testing-executor", "run", "2026-06-04T10:13:00.000Z", "2026-06-04T10:14:38.000Z");
+  mk("r1", "dotnet-testing-reviewer", "review", "2026-06-04T10:15:00.000Z", "2026-06-04T10:19:04.000Z");
+  mk("c1", "dotnet-testing-executor", "清理 orchestrator 暫存目錄", "2026-06-04T10:20:00.000Z", "2026-06-04T10:20:17.000Z");
+  mk("x1", "Explore", "explore", "2026-06-04T10:00:00.000Z", "2026-06-04T10:30:00.000Z");
+
+  const res = T.aggregate(main, T.parseTs("2026-06-04T09:00:00.000Z"), T.parseTs("2026-06-04T11:00:00.000Z"));
+  const d = res.durations;
+  const phase = (r) => d.phases.filter((p) => p.role === r)[0];
+
+  chk("四階段皆有耗時", d.phases.length === 4);
+  chk("Analyzer 時長 = hi − lo（148 秒）", phase("analyzer").seconds === 148);
+  chk("平行 Writer 各列各的（2 筆）", phase("writer").rows.length === 2);
+  chk("時間窗重疊判為平行", phase("writer").parallel === true);
+  chk("階段耗時取同階段最長者（558 秒 = 9:18）", phase("writer").seconds === 558);
+  chk("Executor 98 秒 / Reviewer 244 秒", phase("executor").seconds === 98 && phase("reviewer").seconds === 244);
+  chk("總計為四階段之和（1048 秒 = 17:28）", d.totalSeconds === 148 + 558 + 98 + 244);
+  chk("cleanup 另列不計入總計", d.cleanups.length === 1 && d.cleanups[0].seconds === 17);
+  chk("非 dotnet-testing-* subagent 不計耗時", !d.phases.concat(d.cleanups).some((p) => String(p.role) === "Explore"));
+
+  const table = T.renderDurationTable(res);
+  chk("耗時表含標題與階段列", table.indexOf("### ⏱ 各階段耗時") !== -1 && table.indexOf("| Analyzer | 2:28 |") !== -1);
+  chk("耗時表平行明細", table.indexOf("9:18 / 8:02（2 個平行）") !== -1);
+  chk("耗時表總計列", table.indexOf("| **總計** | **17:28** |") !== -1);
+  chk("耗時表 cleanup 列標示不計入", table.indexOf("cleanup（Executor）") !== -1 && table.indexOf("不計入總計") !== -1);
+
+  const meta = { run_id: "dur", session_id: sid, framework: "unit", framing: "marker",
+    start_ts: "2026-06-04T09:00:00.000Z", end_ts: "2026-06-04T11:00:00.000Z", host_platform: process.platform };
+  const md = T.renderReportMd(meta, res);
+  chk("報告 Subagent 明細含耗時欄", md.indexOf("| 檔案 | agentType | 耗時 |") !== -1);
+  chk("報告含各階段耗時段", md.indexOf("## 各階段耗時") !== -1);
+
+  const empty = T.aggregate(path.join(tmp, "nope.jsonl"), T.parseTs("2026-06-04T09:00:00.000Z"), T.parseTs("2026-06-04T11:00:00.000Z"));
+  chk("無 subagent 時耗時表不炸", T.renderDurationTable(empty).indexOf("（無 subagent 紀錄）") !== -1);
+
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
+// Phase 8.1：循序 subagent 與總計封閉性
+// ---------------------------------------------------------------------------
+
+section("Phase 8.1: 循序判定 / 耗時表封閉");
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tu_seq_"));
+  const sid = "22222222-2222-2222-2222-222222222222";
+  const main = path.join(tmp, sid + ".jsonl");
+  const sdir = path.join(tmp, sid, "subagents");
+  fs.mkdirSync(sdir, { recursive: true });
+  const row = (ts) =>
+    JSON.stringify({
+      type: "assistant",
+      isSidechain: true,
+      timestamp: ts,
+      message: { role: "assistant", model: "claude-sonnet-4-6", usage: { input_tokens: 1, output_tokens: 1 } },
+    });
+  fs.writeFileSync(main, row("2026-06-04T10:05:00.000Z") + "\n");
+  const mk = (name, at, desc, t0, t1) => {
+    fs.writeFileSync(path.join(sdir, name + ".meta.json"), JSON.stringify({ agentType: at, description: desc }));
+    fs.writeFileSync(path.join(sdir, name + ".jsonl"), [row(t0), row(t1)].join("\n") + "\n");
+  };
+  // 小數秒：各階段個別四捨五入後相加才會與總計相符（舊版以原始浮點累加，差 1 秒）
+  mk("a1", "dotnet-testing-analyzer", "analyze", "2026-06-04T10:00:00.000Z", "2026-06-04T10:00:30.500Z");
+  // 兩批 Writer 循序（第一批 10:01:00–10:03:30.500，第二批 10:04:00–10:06:30.500，時間窗不重疊）
+  mk("w1", "dotnet-testing-writer", "write batch 1", "2026-06-04T10:01:00.000Z", "2026-06-04T10:03:30.500Z");
+  mk("w2", "dotnet-testing-writer", "write batch 2", "2026-06-04T10:04:00.000Z", "2026-06-04T10:06:30.500Z");
+  mk("e1", "dotnet-testing-executor", "run", "2026-06-04T10:07:00.000Z", "2026-06-04T10:07:30.500Z");
+  mk("r1", "dotnet-testing-reviewer", "review", "2026-06-04T10:08:00.000Z", "2026-06-04T10:08:30.500Z");
+
+  const res = T.aggregate(main, T.parseTs("2026-06-04T09:00:00.000Z"), T.parseTs("2026-06-04T11:00:00.000Z"));
+  const d = res.durations;
+  const phase = (r) => d.phases.filter((p) => p.role === r)[0];
+
+  chk("時間窗不重疊判為循序", phase("writer").parallel === false);
+  chk("循序階段耗時為相加（150.5 + 150.5 = 301 秒 = 5:01）", phase("writer").seconds === 301);
+  chk("循序明細標「N 個循序」", T.renderDurationTable(res).indexOf("2:31 / 2:31（2 個循序）") !== -1);
+  chk("總計為各階段取整後相加（31 + 301 + 31 + 31 = 394 秒）", d.totalSeconds === 394);
+
+  // 封閉性：總計的顯示值 = 四個階段顯示值相加
+  const table = T.renderDurationTable(res);
+  const shown = table.split("\n").filter((l) => l.indexOf("| ") === 0 && l.indexOf(" | ") !== -1);
+  const toSec = (s) => {
+    const p = s.split(":").map(Number);
+    return p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p[0] * 60 + p[1];
+  };
+  const cells = shown.map((l) => l.split("|").map((c) => c.trim()));
+  const phaseSum = cells
+    .filter((c) => c[1] && c[1].indexOf("**") === -1 && c[1].indexOf("cleanup") === -1 && /^\d+:\d{2}/.test(c[2] || ""))
+    .reduce((a, c) => a + toSec(c[2]), 0);
+  const totalCell = cells.filter((c) => c[1] === "**總計**")[0];
+  chk("耗時表封閉：總計顯示值 = 四階段顯示值相加", totalCell && toSec(totalCell[2].replace(/\*/g, "")) === phaseSum);
+
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
 // 結果
 // ---------------------------------------------------------------------------
 process.stdout.write("\n");

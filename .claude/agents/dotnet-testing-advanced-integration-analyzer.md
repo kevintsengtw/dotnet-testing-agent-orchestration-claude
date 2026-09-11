@@ -8,6 +8,7 @@ tools:
   - Bash
   - Write
 model: sonnet
+effort: high
 maxTurns: 50
 permissionMode: bypassPermissions
 ---
@@ -108,15 +109,17 @@ permissionMode: bypassPermissions
 
 #### Step 3.2：容器需求偵測
 
-掃描 NuGet 套件和 `Program.cs` 服務註冊，偵測需要的容器類型：
+掃描 NuGet 套件和 `Program.cs` 服務註冊，判斷本次測試需要的容器，輸出 `containerRequirements`。
 
-| 偵測規則 | 容器類型 | 映像 |
-|---------|---------|------|
-| `Microsoft.EntityFrameworkCore.SqlServer` 或 `AddSqlServer<>()` | SQL Server | `mcr.microsoft.com/mssql/server:2022-latest` |
-| `Npgsql.EntityFrameworkCore.PostgreSQL` 或 `AddNpgsql<>()` | PostgreSQL | `postgres:latest` |
-| `MongoDB.Driver` 或 `AddMongoDB()` | MongoDB | `mongo:latest` |
-| `StackExchange.Redis` 或 `AddRedis()` | Redis | `redis:latest` |
-| `Microsoft.EntityFrameworkCore.InMemory` | 無容器需求 | — |
+下表是套件與資料庫技術的對應**參考**，不是「有套件就必須列容器」的規則——以受測 API 在 Testing 環境下實際會用到的為準：
+
+| 套件／註冊 | 資料庫技術 |
+|---------|---------|
+| `Microsoft.EntityFrameworkCore.SqlServer` 或 `AddSqlServer<>()` | SQL Server |
+| `Npgsql.EntityFrameworkCore.PostgreSQL` 或 `AddNpgsql<>()` | PostgreSQL |
+| `MongoDB.Driver` 或 `AddMongoDB()` | MongoDB |
+| `StackExchange.Redis` 或 `AddRedis()` | Redis |
+| `Microsoft.EntityFrameworkCore.InMemory` | 無容器需求 |
 
 **注意**：即使 source 專案使用 InMemory，如果使用者要求使用真實資料庫容器，也要在 `containerRequirements` 中列出。
 
@@ -165,6 +168,10 @@ permissionMode: bypassPermissions
 2. 讀取驗證規則
 3. 識別 Exception Handler 中的 `ValidationException` 處理（轉換為 `ValidationProblemDetails` 等）
 4. 為每個 Validator 的 `T` 類別，產生 `validBaseObjectHint`：依據 `RuleFor` 規則，為每個有約束的屬性選擇合法值（`NotEmpty` → 非空字串；`Length(min, max)` → 接近 min 的合法值；`GreaterThan(n)` → n+1；`EmailAddress` → `"test@example.com"` 等）。此提示讓 Writer 建立有效的請求體用於 Happy Path 測試。
+5. **每條驗證規則各展開一個 400 場景（強制）**：對每個 Validator 的每個屬性的每條驗證規則（`NotEmpty`、`MaximumLength(n)`、`EmailAddress`、`GreaterThan(n)`……），各產出一個 `suggestedTestScenarios` 條目，命名 `{端點}_{中文屬性描述}{違規描述}_應回傳400ValidationProblemDetails`（如 `Create_客戶電子郵件超過320字元_應回傳400ValidationProblemDetails`），**禁止合併、禁止只挑代表性規則**。同一個屬性有多條規則（`NotEmpty` + `MaximumLength`）就是多個場景。
+   - **共用 Validator 的端點各自列**：`Create` 與 `Update` 各有 Validator 且規則相同時，兩個端點各自產出整組場景，不得只列其一——Writer 的對稱驗證規則依賴這裡的完整列出。
+   - **條件式規則**（`When`／`Unless`）：條件成立的失敗場景之外，另列「條件不成立、不觸發驗證」的成功場景；條件涉及字串為空時，`null` 與空字串 `""` 各一。
+   - 產出後回頭比對 Validator 原始碼，確認每條 `RuleFor` 鏈上的每個驗證器都有對應場景。這裡不列，Writer 就不寫，Reviewer 每跑一次就標一次 🔴。
 
 ### Step 4：掃描既有測試基礎設施
 
@@ -329,6 +336,8 @@ permissionMode: bypassPermissions
 3. **containerRequirements 一致性**：若 `dbRegistrationAnalysis` 偵測到資料庫，`containerRequirements` 必須包含對應容器
 4. **validatorInfo 完整性**（若有）：每個 validator 必須有 `validBaseObjectHint`，且 `validBaseObjectHint` 的屬性數量 ≥ 1
 5. **existingTestInfrastructure 已確認**：若掃描後無既有設施，`webApiFactory: null`，不要留空物件
+6. **場景命名英文識別字檢查**（重要原則 5 對帳，逐一場景名執行）：對 `suggestedTestScenarios` 的每個名稱，取第 2 段（情境）與第 3 段（預期），掃出所有**連續 3 個以上的英文字母**片段，逐一判定屬「值與型別」（回應型別名、例外型別名、列舉值、語言字面值、HTTP 標頭與協定名 → 放行）或「識別字」（屬性名、參數名、欄位名、路徑片段 → 違反）。**發現違反一律就地改為中文後才寫入交接檔案**，不得留給 Writer 轉換。
+7. **驗證規則場景對帳**（Step 3.4 第 5 項）：若有 `validatorInfo`，`suggestedTestScenarios` 中預期段為 `400ValidationProblemDetails` 的條目數必須 ≥ Σ（每個 Validator 的規則數 × 使用該 Validator 的端點數）。不足即補齊，**不得為了讓數字看起來合理而刪規則**。
 
 若發現任何不一致，修正後再進入 Step 7。
 
@@ -390,8 +399,14 @@ permissionMode: bypassPermissions
 2. **以 API 端點為粒度** — 不同於單元測試的 class method 粒度，整合測試分析以 HTTP endpoint 為單位
 3. **精確偵測容器需求** — 掃描 NuGet 套件 + Program.cs 服務註冊，確定受測 WebAPI 所依賴的真正資料庫技術
 4. **結合使用者需求判斷** — 如果使用者明確要求使用某種容器（如「使用 SQL Server 容器」），即使 source 用 InMemory，也在 `containerRequirements` 中列出
-5. **中文三段式命名** — `suggestedTestScenarios` 必須使用中文三段式格式（`端點_情境_預期`）
+5. **中文三段式命名** — `suggestedTestScenarios` 必須使用中文三段式格式（`端點_情境_預期`），使用中文描述情境與預期結果
+   - **情境與預期段不得嵌入英文屬性名、參數名、欄位名或路徑片段**（如 `CheckInDate`、`CustomerId`、`Quantity`）。需指涉時一律譯為中文（入住日期、客戶編號、數量）。
+   - **判準（可機械判斷，逐一場景名執行）**：取場景名的**第 2 段（情境）與第 3 段（預期）**，若出現**連續 3 個以上的英文字母**，依下列「白名單」與「違反」兩類判定。
+   - **白名單（得保留原文）**：程式碼中的**值與型別** —— 回應型別名（`應回傳400ValidationProblemDetails`、`應回傳404ProblemDetails`）、例外型別名、列舉型別與列舉值（`狀態非Active`、`狀態為CheckedOut`）、語言字面值（`為null`、`應為true`）、HTTP 標頭與協定名（`Location`、`ETag`）。中文化會失去與程式碼的對應，故不視為違反。
+   - **違反（必須改）**：程式碼中的**識別字** —— 屬性名（`CheckInDate` → 入住日期、`CustomerId` → 客戶編號）、參數名、欄位名、路徑片段（`{id}` → 編號）。
+   - **分界原則**：程式碼中的**值與型別**保留原文，**識別字**必須譯為中文。場景名稱是 Writer 的直接輸入，**不得把英文識別字留給 Writer 轉換**——源頭殘留會一路帶到測試方法名並被 Reviewer 判為問題。
 6. **完整掃描既有基礎設施** — 測試專案中既有的 WebApiFactory、TestBase、Collection Fixture 必須被識別，避免 Writer 重複建立
 7. **介面路徑要正確** — 如果有識別到介面（如 `IValidator<T>`），提供正確的檔案路徑
 8. **requiredSkills 必須精確** — 只列出實際需要的 Skills，不要「以防萬一」全部列上
 9. **DbContext 註冊模式必須分析** — `dbRegistrationAnalysis` 是 Writer 決定 DbContext 置換策略的關鍵依據。當 `pattern` 為 `hardcoded-unconditional` 且使用者要求容器化測試（Provider 不同於原始註冊的 Provider）時，必須標記 `risk: "high"` 並建議修改 Program.cs
+10. **驗證規則一律全數列管** — 有 `validatorInfo` 時，每個 Validator 的每條規則都必須在 `suggestedTestScenarios` 有對應的 400 場景（Step 3.4 第 5 項），共用 Validator 的端點各自列。**「已有代表性驗證場景」「Writer 會補」都不是略過的理由。**

@@ -324,7 +324,7 @@ Analyzer **只描述客觀事實**，要用哪些 Skill 由 Writer 讀完原始�
 Writer subagent 接收 Orchestrator 委派後，執行以下工作：
 
 - 讀取 Analyzer 交接的 JSON 分析報告，取得 `suggestedTestScenarios`、`dependencies`、`targetType`、`existingTestInfrastructure` 等客觀事實
-- 預載三項基礎 Skill（`unit-test-fundamentals`、`test-naming-conventions`、`xunit-project-setup`），其餘 16 個依判斷自目錄選取；實際讀了哪些記於 `writer-result.skillsConsulted`
+- 預載三項基礎 Skill（`unit-test-fundamentals`、`test-naming-conventions`、`xunit-project-setup`），其餘 16 個依判斷自目錄選取；實際讀了哪些記於 `writer-result.skillsLoaded`
 - 掃描測試專案中既有的輔助類別（`AutoDataWithCustomization`、`FakeTimeProviderExtensions` 等），優先重用
 - 按照中文三段式命名慣例產生測試方法名稱：`方法名_情境描述_預期結果`
 - 所有斷言使用 AwesomeAssertions（`.Should()` 系列），禁止使用 xUnit 原生 `Assert.*`
@@ -345,7 +345,9 @@ Executor subagent 接收 Orchestrator 委派後，執行以下工作：
 - 若測試執行失敗（紅燈），分析失敗原因並修正測試邏輯或斷言
 - 最多進行 3 輪修正，超過則回報失敗原因給 Orchestrator
 
-Executor 完成後回傳摘要：總測試數、通過數、失敗數、修正輪數。
+Executor 完成後回傳摘要：總測試數、通過數、失敗數、修正輪數、生產程式碼觀察（`productionObservations`）。
+
+Executor **不修改 `src/`**：測試失敗的根因在生產程式碼時保留失敗、只回報，由使用者決定後續。
 
 ---
 

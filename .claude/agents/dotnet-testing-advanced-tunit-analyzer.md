@@ -8,6 +8,7 @@ tools:
   - Bash
   - Write
 model: sonnet
+effort: high
 maxTurns: 50
 permissionMode: bypassPermissions
 ---
@@ -180,22 +181,9 @@ Step 3 的「建構子依賴」只辨識需要 Mock 的 interface 清單，**不
 
 ### Step 4：決定 requiredSkills
 
-根據分析結果決定需要載入的 Skills。`requiredSkills` 輸出的是**識別碼**，Writer 依識別碼對應的 `.agents/skills/<name>/SKILL.md` 路徑載入，Analyzer **本身不載入任何技術型 Skill**：
+`requiredSkills` 固定為 `["tunit-fundamentals"]`（識別碼對應 `.agents/skills/dotnet-testing-advanced-tunit-fundamentals/SKILL.md`）。Analyzer **本身不載入任何技術型 Skill**。
 
-| 識別碼 | SKILL.md 路徑 | 載入條件 |
-|--------|-----------|---------|
-| `tunit-fundamentals` | `.agents/skills/dotnet-testing-advanced-tunit-fundamentals/SKILL.md` | **必載** |
-| `tunit-advanced` | `.agents/skills/dotnet-testing-advanced-tunit-advanced/SKILL.md` | 以下任一條件滿足時載入 |
-
-**`tunit-advanced` 的載入觸發條件**：
-
-1. 需要 MethodDataSource / ClassDataSource / Matrix 測試
-2. 需要 DI（`MicrosoftDependencyInjectionDataSource`）
-3. 需要 Retry / Timeout 執行控制
-4. 需要 Properties 篩選
-5. 需要 ASP.NET Core 整合測試（WebApplicationFactory with TUnit）
-6. 需要 Testcontainers 多容器編排
-7. 從 xUnit/NUnit 遷移且原有進階功能
+其餘 Skill 由 Writer 讀完被測目標、`tunitFeatureRequirements` 與依賴後自行判斷要不要載入 —— 你只描述事實（功能需求旗標、依賴清單），不替 Writer 指派。
 
 ### Step 5：掃描既有測試基礎設施
 
@@ -275,7 +263,7 @@ Step 3 的「建構子依賴」只辨識需要 Mock 的 interface 清單，**不
     "webApplicationFactory": false,
     "testcontainers": false
   },
-  "requiredSkills": ["tunit-fundamentals", "tunit-advanced"],
+  "requiredSkills": ["tunit-fundamentals"],
   "existingTestInfrastructure": {
     "existingTestFiles": [
       "TUnitFundamentalsTests.cs",
@@ -399,7 +387,7 @@ Step 3 的「建構子依賴」只辨識需要 Mock 的 interface 清單，**不
     "Create": 4,
     "Delete": 3
   },
-  "requiredSkills": ["tunit-fundamentals", "tunit-advanced"],
+  "requiredSkills": ["tunit-fundamentals"],
   "tunitFeatureRequirements": { "basicTest": true, "arguments": true, "matrixTests": false },
   "analysisFilePath": "tests/MyProject.Core.Tests/.orchestrator/analysis/ProductService.analysis.json",
   "projectContext": {
@@ -442,7 +430,7 @@ Step 3 的「建構子依賴」只辨識需要 Mock 的 interface 清單，**不
 1. **只分析，不寫碼** — 你的產出是交接檔案 + 精簡摘要回傳
 2. **被測類別優先** — 從被測類別的結構開始分析，再判斷 TUnit 功能需求
 3. **TUnit 功能精準判斷** — `tunitFeatureRequirements` 的每個布林值必須基於實際分析
-4. **條件載入 tunit-advanced** — 只有存在進階功能需求時才將 `tunit-advanced` 加入 `requiredSkills`
+4. **只描述不指派** — `requiredSkills` 固定 `tunit-fundamentals`；要不要載入進階 Skill 由 Writer 判斷
 5. **中文三段式命名** — `suggestedTestScenarios` 必須使用中文三段式格式（`方法_情境_預期`），使用中文描述情境與預期結果
    - **情境與預期段不得嵌入英文屬性名、參數名或欄位名**（如 `Email`、`ProductName`、`isRenewal`、`MaxRenewals`）。需指涉時一律譯為中文（電子郵件、產品名稱、續約狀態、最大續借次數）。
    - **判準（可機械判斷，逐一場景名執行）**：取場景名的**第 2 段（情境）與第 3 段（預期）**，若出現**連續 3 個以上的英文字母**，依下列「白名單」與「違反」兩類判定。

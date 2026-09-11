@@ -114,6 +114,7 @@ Orchestrator 一律隨 Writer prompt 下達風格指令：例外斷言統一 `.T
 - 執行 `dotnet run`（TUnit 推薦執行方式，不是 `dotnet test`）
 - 若有建置或執行失敗，進行最多 3 輪的錯誤修正迴圈
 - Source Generator 建置失敗時，可能需要 `dotnet clean` 後重新建置
+- **不修改 `src/`**：根因在生產程式碼時保留測試失敗、記入 `productionObservations[]`（`file`、`location`、`issue`、`options[]`），由使用者決定
 
 **注意：**
 

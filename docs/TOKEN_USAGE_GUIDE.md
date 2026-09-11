@@ -9,8 +9,8 @@
 - **整合進測試工作流程本身**，不是獨立 skill、不裝任何 session 級 hook
   （UserPromptSubmit / Stop / SessionEnd）。因此**不會影響非測試工作流程的其他工作**。
 - 由四個 Orchestrator skill 在「耗時表之後」呼叫引擎一次，把 token 用量表附在結果最後。
-- 引擎：`.claude/scripts/token-usage/token_usage.js`（單一跨平台 Node.js，零依賴，**只讀 transcript**）。
-- 跨平台：Windows / macOS / Linux 一律用 `node`（指令同名，免直譯器 fallback）；與既有 `.claude/hooks/` 的 Node 工具一致。
+- 引擎：`.claude/scripts/dotnet-testing-claude-full/token_usage.js`（單一跨平台 Node.js，零依賴，**只讀 transcript**）。
+- 跨平台：Windows / macOS / Linux 一律用 `node`（指令同名，免直譯器 fallback）；與 `.claude/scripts/` 下其餘 Node 工具一致。
 
 ## 資料來源（已於本環境驗證）
 
@@ -35,14 +35,14 @@
    這讓 **Phase 0 清理用的 Executor 落在窗口外被排除**，主執行緒也只計階段 1 之後、更精準。
 
    ```bash
-   node .claude/scripts/token-usage/token_usage.js start <framework> 2>/dev/null
+   node .claude/scripts/dotnet-testing-claude-full/token_usage.js start <framework> 2>/dev/null
    ```
 
 2. **耗時表之後 — `report <framework>`**：輸出 `### ⏱ 各階段耗時` 表後，計算並把精簡 token 表附在結果最後。
    **修改流程（套用 Reviewer 建議）結果呈現後也會再呼叫一次**，因 marker 起點不變 → 輸出「含修改的累計用量」。
 
    ```bash
-   node .claude/scripts/token-usage/token_usage.js report <framework> 2>/dev/null
+   node .claude/scripts/dotnet-testing-claude-full/token_usage.js report <framework> 2>/dev/null
    ```
 
 引擎**自我定位**當前 session：**優先用 runtime 注入的權威 `CLAUDE_CODE_SESSION_ID`**，以該 sid 跨
@@ -83,7 +83,7 @@ Copy-Item .claude\scripts\token-usage\pricing.config.example.json token-usage-re
 
 ```bash
 # macOS / Linux
-cp .claude/scripts/token-usage/pricing.config.example.json token-usage-reports/pricing.config.json
+cp .claude/scripts/dotnet-testing-claude-full/pricing.config.example.json token-usage-reports/pricing.config.json
 ```
 
 `rates` 的 key 須與 transcript 的 `message.model` 一致；單價單位為「每百萬 token (per MTok) 美元」。
@@ -94,10 +94,10 @@ cp .claude/scripts/token-usage/pricing.config.example.json token-usage-reports/p
 ### 自我測試（合成 transcript）
 
 ```bash
-node .claude/scripts/token-usage/token_usage.js selftest
+node .claude/scripts/dotnet-testing-claude-full/token_usage.js selftest
 ```
 
-> 開發用更細的單元測試：`node .claude/scripts/token-usage/token_usage.test.js`。
+> 開發用更細的單元測試：`node .claude/scripts/dotnet-testing-claude-full/token_usage.test.js`。
 
 驗證：各 scope 加總、`Explore` 排除、`含快取 input = 純+寫+讀`、窗口過濾、writer×N 聚合計次、
 缺 cache 欄以 0 計、subagent-cluster 框定。
@@ -105,7 +105,7 @@ node .claude/scripts/token-usage/token_usage.js selftest
 ### 手動檢視最近一次（不經 Orchestrator）
 
 ```bash
-node .claude/scripts/token-usage/token_usage.js report 2>/dev/null
+node .claude/scripts/dotnet-testing-claude-full/token_usage.js report 2>/dev/null
 ```
 
 ### 與 ccusage 對帳（選用）
@@ -140,7 +140,7 @@ Claude Code 的 `~/.claude/projects/<資料夾>/` 命名，其正規化規則比
 macOS / Linux 行為一致。診斷時可執行：
 
 ```bash
-node .claude/scripts/token-usage/token_usage.js locate
+node .claude/scripts/dotnet-testing-claude-full/token_usage.js locate
 ```
 
 輸出 `resolvedVia`：`env-fast`（推算資料夾即命中）／`env-glob`（跨資料夾命中）／
@@ -152,4 +152,4 @@ node .claude/scripts/token-usage/token_usage.js locate
 - 對 transcript 只讀不寫；任何錯誤靜默結束（exit 0），不阻斷 bypassPermissions 自動流程。
 - 不裝 session 級 hook；input 三分項分開；不寫死 token 單價；不對內容做任何壓縮 / 精簡。
 - 命名不使用 `dotnet-testing-*` 前綴（該前綴專屬 dotnet-testing-agent-skills 系列）；
-  本功能為 Orchestrator 內嵌工具，置於 `.claude/scripts/token-usage/`。
+  本功能為 Orchestrator 內嵌工具，置於 `.claude/scripts/dotnet-testing-claude-full/`。

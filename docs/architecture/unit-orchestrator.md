@@ -70,8 +70,11 @@ Analyzer 讀取被測試目標的原始碼，識別類別類型與依賴，產�
 **Analyzer 輸出摘要（回傳給 Orchestrator 的欄位）：**
 
 - `className`、`targetType`、`methodCount`、`scenarioCount`、`methodScenarioCounts`
+- `excludedMethods`：本次範圍未納入的公開方法（一律輸出，無排除時為 `[]`）
 - `analysisFilePath`：實際寫入的交接檔案路徑
 - `projectContext`：目標框架版本（`net8.0` / `net9.0` / `net10.0`）
+
+> `excludedMethods` 是下游判讀涵蓋範圍的依據：提示詞只指定部分方法時，Reviewer 的「每個公開方法至少一個正常路徑」以 `methodsToTest` 為錨，不會把範圍外的方法判為缺漏。
 
 Orchestrator 收到摘要後，使用 Glob 驗證交接檔案是否確實存在，再啟動 Writer。
 
@@ -95,7 +98,7 @@ Writer 在 Step 0 讀取 Analyzer 的交接 JSON，按需載入對應的 Agent S
 
 Writer 預載三項基礎 Skill（`unit-test-fundamentals`、`test-naming-conventions`、`xunit-project-setup`），其餘 16 個以目錄形式提供，由 Writer 讀完被測目標原始碼後自行決定要不要讀。Analyzer 不再產出 `requiredTechniques` 指派清單。
 
-實際讀取了哪些記於交接檔案的 `skillsConsulted`。
+實際讀取了哪些記於交接檔案的 `skillsLoaded`。
 
 **斷言規範：**
 
@@ -122,9 +125,13 @@ Executor 負責建置並執行測試，同時處理編譯錯誤修正。
 - 最多修正 3 輪，超過則回報失敗並帶入 Reviewer 階段標示問題。
 - 常見修正項目：缺少 `using` 宣告、NuGet 套件版本不符、型別名稱不存在或拼寫錯誤。
 
+**生產程式碼問題：**
+
+Executor **不修改 `src/`**。根因在生產程式碼時保留測試失敗、記入 `productionObservations[]`（`file`、`location`、`issue`、`options[]`），由使用者決定。
+
 **Executor 輸出摘要：**
 
-- `totalTests`、`passedTests`、`failedTests`、`fixRounds`、`executorResultFilePath`
+- `totalTests`、`passedTests`、`failedTests`、`fixRounds`、`productionObservations`、`executorResultFilePath`
 
 ### Phase 4 Reviewer
 

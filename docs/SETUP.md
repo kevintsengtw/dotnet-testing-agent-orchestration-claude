@@ -86,11 +86,6 @@ npx skills install dotnet-testing-agent-skills
 │   ├── dotnet-testing-advanced-tunit-executor.md
 │   └── dotnet-testing-advanced-tunit-reviewer.md
 │
-├── hooks/                                                   ← 本 repo 內建
-│   ├── dotnet-testing-agent-timer-pre.sh
-│   ├── dotnet-testing-agent-timer-post.sh
-│   └── install-hooks.js
-│
 └── skills/
     │
     │   ── 本 repo 內建（5 個）──────────────────────────────
@@ -141,41 +136,7 @@ npx skills install dotnet-testing-agent-skills
     └── dotnet-testing-xunit-project-setup/
 ```
 
-> **注意**：步驟 4（安裝計時 Hook）完成後，會新增 `.claude/settings.json`，其中包含 `hooks` 設定區段。
-
-### 步驟 4：安裝計時 Hook（可選）
-
-計時 Hook 會在每個 Subagent 執行前後自動追蹤耗時，並將時間資訊注入到 Claude 的 context 中，方便了解工作流程的效能。未安裝不影響核心測試工作流程的執行，僅缺少自動時間追蹤。
-
-**自動安裝（推薦）：**
-
-在 repo 根目錄執行：
-
-```bash
-node .claude/hooks/install-hooks.js
-```
-
-腳本會自動完成以下動作：
-
-1. 複製 hook 腳本到 `.claude/hooks/`（`dotnet-testing-agent-timer-pre.sh`、`dotnet-testing-agent-timer-post.sh`）
-2. 合併 hooks 設定到 `.claude/settings.json`（不覆寫既有設定，冪等設計）
-
-**驗證 Hook 安裝：**
-
-安裝後確認 `.claude/settings.json` 已包含 `hooks` 區段，結構如下：
-
-```text
-{
-  "hooks": {
-    "PreToolUse": [{ "matcher": "Agent", "hooks": [...] }],
-    "PostToolUse": [{ "matcher": "Agent", "hooks": [...] }]
-  }
-}
-```
-
-Hook 只對 `subagent_type` 以 `dotnet-testing-` 開頭的 Agent 呼叫生效，其他 Agent 呼叫完全不受影響。
-
-### 步驟 5：驗證安裝
+### 步驟 4：驗證安裝
 
 啟動 Claude Code 後，在對話中輸入 `/` 確認以下斜線指令可用：
 
@@ -274,18 +235,3 @@ dotnet --list-sdks
 
 ---
 
-### 問題 6：計時 Hook 未顯示耗時
-
-**症狀：** Subagent 執行完畢後，沒有顯示 `⏱` 計時耗時訊息。
-
-**可能原因：** Hook 未安裝，或 `.claude/settings.json` 的 `hooks` 設定不完整。
-
-**解法：**
-
-重新執行安裝腳本（冪等，安全重複執行）：
-
-```bash
-node .claude/hooks/install-hooks.js
-```
-
-執行後確認 `.claude/settings.json` 包含完整的 `PreToolUse` 與 `PostToolUse` hooks 設定。若 `settings.json` 已有其他設定，腳本只會合併 `hooks` 區段，不會覆寫既有設定。

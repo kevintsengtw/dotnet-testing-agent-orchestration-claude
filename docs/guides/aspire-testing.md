@@ -295,7 +295,7 @@ Aspire Executor 的特殊行為：
 - 執行 `dotnet build` 建置測試專案
 - 執行 `dotnet test`，AppHost 自動拉起所有 Aspire 管理的 Container（SQL Server + Redis）
 - 使用長超時設定（10 分鐘以上），容納 Container 啟動時間
-- 最多 3 輪修正迴圈
+- 最多 5 輪修正迴圈（Aspire 環境複雜度較高，較其他三套多 2 輪）
 
 ### Phase 4：Reviewer 審查（可選）
 

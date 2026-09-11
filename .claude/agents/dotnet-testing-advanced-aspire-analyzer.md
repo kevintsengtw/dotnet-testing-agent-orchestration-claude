@@ -8,6 +8,7 @@ tools:
   - Bash
   - Write
 model: sonnet
+effort: high
 maxTurns: 50
 permissionMode: bypassPermissions
 ---
@@ -137,6 +138,10 @@ builder.AddProject<Projects.WebApi>("webapi")         // → Resource: Project
 1. 找到所有 `AbstractValidator<T>` 實作
 2. 識別驗證規則
 3. 識別 Exception Handler 中的 `ValidationException` 處理
+4. **每條驗證規則各展開一個 400 場景（強制）**：對每個 Validator 的每個屬性的每條驗證規則（`NotEmpty`、`MaximumLength(n)`、`EmailAddress`、`GreaterThan(n)`……），各產出一個 `suggestedTestScenarios` 條目，命名 `{端點操作}_{中文屬性描述}{違規描述}_應回傳400ValidationProblemDetails`（如 `CreateBooking_房客電子郵件超過320字元_應回傳400ValidationProblemDetails`），**禁止合併、禁止只挑代表性規則**。同一個屬性有多條規則（`NotEmpty` + `MaximumLength`）就是多個場景。
+   - **共用 Validator 的端點各自列**：`Create` 與 `Update` 各有 Validator 且規則相同時，兩個端點各自產出整組場景，不得只列其一——Writer 的對稱驗證規則依賴這裡的完整列出。
+   - **條件式規則**（`When`／`Unless`）：條件成立的失敗場景之外，另列「條件不成立、不觸發驗證」的成功場景；條件涉及字串為空時，`null` 與空字串 `""` 各一。
+   - 產出後回頭比對 Validator 原始碼，確認每條 `RuleFor` 鏈上的每個驗證器都有對應場景。這裡不列，Writer 就不寫，Reviewer 每跑一次就標一次 🔴。
 
 ### Step 4：掃描既有測試基礎設施
 
@@ -198,6 +203,8 @@ Aspire Analyzer **固定輸出單一 Skill**：
 2. **必填欄位不為空**：`projectContext.testProjectPath`、`appHostInfo.aspireVersion`（非空字串）、`requiredSkills`（固定為 `["aspire-testing"]`）
 3. **resource 名稱一致性**：`projectReferences[].name` 必須與 AppHost `AddProject("name")` 中的字串參數完全一致
 4. **sourceCodeContext 完整性**：`appHostProgramCs` 和 `apiProgramCs` 的 `content` 欄位不得為空字串
+5. **場景命名英文識別字檢查**（重要原則 5 對帳，逐一場景名執行）：對 `suggestedTestScenarios` 的每個名稱，取第 2 段（情境）與第 3 段（預期），掃出所有**連續 3 個以上的英文字母**片段，逐一判定屬「值與型別」（回應型別名、例外型別名、列舉值、語言字面值、HTTP 標頭與協定名、Resource 與服務名稱 → 放行）或「識別字」（屬性名、參數名、欄位名、路徑片段 → 違反）。**發現違反一律就地改為中文後才寫入交接檔案**，不得留給 Writer 轉換。
+6. **驗證規則場景對帳**（Step 3d 第 4 項）：若有 validators，`suggestedTestScenarios` 中預期段為 `400ValidationProblemDetails` 的條目數必須 ≥ Σ（每個 Validator 的規則數 × 使用該 Validator 的端點數）。不足即補齊，**不得為了讓數字看起來合理而刪規則**。
 
 若發現任何不一致，修正後再進入 Step 7。
 
@@ -259,9 +266,15 @@ Aspire Analyzer **固定輸出單一 Skill**：
 2. **AppHost 優先** — 從 AppHost `Program.cs` 開始分析，再展開到被編排的 API 專案
 3. **Resource 定義完整性** — 必須擷取所有 `builder.Add*` 呼叫，包含 Resource 名稱、類型、資料卷、依賴關係
 4. **不需要 dbRegistrationAnalysis** — Aspire 自動管理 DB 連線，與 Integration Testing 的 descriptor 移除策略無關
-5. **中文三段式命名** — `suggestedTestScenarios` 必須使用中文三段式格式（`端點操作_情境_預期`）
+5. **中文三段式命名** — `suggestedTestScenarios` 必須使用中文三段式格式（`端點操作_情境_預期`），使用中文描述情境與預期結果
+   - **情境與預期段不得嵌入英文屬性名、參數名、欄位名或路徑片段**（如 `CheckInDate`、`CustomerId`、`Quantity`）。需指涉時一律譯為中文（入住日期、客戶編號、數量）。
+   - **判準（可機械判斷，逐一場景名執行）**：取場景名的**第 2 段（情境）與第 3 段（預期）**，若出現**連續 3 個以上的英文字母**，依下列「白名單」與「違反」兩類判定。
+   - **白名單（得保留原文）**：程式碼中的**值與型別** —— 回應型別名（`應回傳400ValidationProblemDetails`、`應回傳404ProblemDetails`）、例外型別名、列舉型別與列舉值（`狀態非Active`、`狀態為CheckedOut`）、語言字面值（`為null`、`應為true`）、HTTP 標頭與協定名（`Location`、`ETag`）、Resource 與服務名稱（`AddProject("webapi")` 中的 `webapi`）。中文化會失去與程式碼的對應，故不視為違反。
+   - **違反（必須改）**：程式碼中的**識別字** —— 屬性名（`CheckInDate` → 入住日期、`CustomerId` → 客戶編號）、參數名、欄位名、路徑片段（`{id}` → 編號）。
+   - **分界原則**：程式碼中的**值與型別**保留原文，**識別字**必須譯為中文。場景名稱是 Writer 的直接輸入，**不得把英文識別字留給 Writer 轉換**——源頭殘留會一路帶到測試方法名並被 Reviewer 判為問題。
 6. **完整掃描既有基礎設施** — 測試專案中既有的 AspireAppFixture、Collection Fixture 必須被識別，避免 Writer 重複建立
 7. **requiredSkills 固定** — Aspire Analyzer 固定輸出 `["aspire-testing"]`
 8. **服務名稱精確** — `projectReferences[].name` 必須與 AppHost 中 `AddProject("name")` 的名稱參數完全一致，這會影響 `CreateHttpClient("name")` 的正確性
 9. **Aspire 版本記錄** — 從 `.csproj` 中擷取 Aspire 版本，需處理兩種 csproj 格式：**(A) 分離 SDK 格式**（`<Sdk Name="Aspire.AppHost.Sdk" Version="X.Y.Z" />`，適用 Aspire 8.x/9.x）：版本以 `Aspire.Hosting.AppHost` 套件版本為準（當 SDK 版本與套件版本不同時，以套件版本為權威來源）；**(B) Project SDK 格式**（`<Project Sdk="Aspire.AppHost.Sdk/X.Y.Z">`，適用 Aspire 13.x）：此格式無獨立 `Aspire.Hosting.AppHost` 套件參考，版本從 SDK 屬性取得
 10. **sourceCodeContext 完整性** — 所有在 Step 1-4 中讀取的原始碼檔案必須收錄至 `sourceCodeContext`，供下游 Writer 和 Reviewer 直接使用，避免重複讀取。`content` 欄位必須是完整檔案內容，不可是摘要或節錄
+11. **驗證規則一律全數列管** — 有 Validator 時，每個 Validator 的每條規則都必須在 `suggestedTestScenarios` 有對應的 400 場景（Step 3d 第 4 項），共用 Validator 的端點各自列。**「已有代表性驗證場景」「Writer 會補」都不是略過的理由。**

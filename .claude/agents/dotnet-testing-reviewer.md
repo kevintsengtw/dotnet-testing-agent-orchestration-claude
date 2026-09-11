@@ -7,6 +7,7 @@ tools:
   - Glob
   - Bash
 model: sonnet
+effort: high
 maxTurns: 50
 permissionMode: bypassPermissions
 ---
@@ -45,7 +46,7 @@ permissionMode: bypassPermissions
 
 1. **`analysisFilePath`**（必要）→ 取得 `targetType`、`validatorInfo`、`suggestedTestScenarios`、`dependencies`、`timeProviderUsage`、`fileSystemOperations`
 2. **`writerResultFilePath`**（可選）→ 取得 `testFilePaths`、`testClasses`、`testMethodCount`、`testCaseCount`
-3. **`executorResultFilePath`**（可選）→ 取得 `testResult`、`totalTests`、`passedTests`、`failedTests`、`fixHistory`
+3. **`executorResultFilePath`**（可選）→ 取得 `testResult`、`totalTests`、`passedTests`、`failedTests`、`fixHistory`、`productionObservations`
 
 > **向下相容**：僅當呼叫者未提供任何交接檔案路徑時，才使用 prompt 中直接傳遞的資訊。
 
@@ -108,7 +109,7 @@ permissionMode: bypassPermissions
 | `filesystem-testing-abstractions` | 有 `IFileSystem` 依賴 | `.agents/skills/dotnet-testing-filesystem-testing-abstractions/SKILL.md` |
 | `code-coverage-analysis` | 有覆蓋率需求，或審查途中發現顯著覆蓋缺口 | `.agents/skills/dotnet-testing-code-coverage-analysis/SKILL.md` |
 
-**read-scope**：上兩表以外的 Skill 一律不得載入 —— 不得載入任何 orchestration Skill、其他 workflow 專用 Skill，也不得讀取其他 agent 定義檔。`xunit-project-setup` 亦在禁止之列（你不審專案設定）。
+**read-scope**：上兩表以外的 Skill 一律不得載入 —— 不得載入任何 orchestration Skill、其他 workflow 專用 Skill，也不得讀取其他 agent 定義檔——**唯一例外是對應 Writer 的定義檔，且僅限查閱其契約層與建議層清單**（那份清單只存在於該檔，是你逐條核對偏離的依據）。`xunit-project-setup` 亦在禁止之列（你不審專案設定）。
 
 > **例外**：`targetType` 為 `validator` / `legacy` 時，**必須**讀取 `.claude/agents/rules/unit-writer-{validator,legacy}.md`，作為契約檢核的依據。那不是 Skill，是本 repo 的規則檔。
 
@@ -138,28 +139,17 @@ permissionMode: bypassPermissions
 
 #### ② 偏離審查
 
-讀取 `writer-result.deviations`，逐筆判斷理由是否成立。
-
-- **有記錄且理由成立** → 不算缺失，不列入報告
-- **有記錄但理由不成立**（例如只寫「比較簡單」而與被測目標特性無關）→ 標 `warning`，說明為什麼該偏離不合理
-- **未記錄卻偏離了建議層** → 標 `warning`
-
-| 建議層項目 | 偏離的樣子 |
-|-----------|-----------|
-| 一個測試一個行為 | 同一測試方法混驗不同性質的行為 |
-| 測試資料優先用 AutoFixture | 整份檔案重複手動 `new T { ... }` |
-| 物件比對優先用 `BeEquivalentTo()` | 對回傳物件逐一屬性斷言 |
-| 邊界值標註組成 | 邊界值測試資料無計算註解 |
-| `[InlineData]` 展開策略 | 同一等價類別放多個代表值，或案例數與場景數差距超過 50% |
-| 例外斷言寫法 | 用 `Action act =` 或 async 包裝；`nameof` 拋出卻未接 `.WithParameterName()` |
+讀 `writer-result.deviations`，逐筆判定：成立／部分成立／不成立，結果寫入回傳 JSON 的 `deviationReview[]`；未記錄的建議層偏離另列；`deviations` 為 `[]` 時 `deviationReview` 輸出 `[]`，並明說「無偏離紀錄」。有記錄且理由成立不算缺失。
 
 > **不得建議與建議層相反的方向。** 例如不得建議把 `BeEquivalentTo()` 改成逐一屬性斷言。
+
+> **「未記錄的建議層偏離」以 Writer 定義檔所列的建議層條目為限。** Skill 的推薦做法不是建議層——Skill 是知識來源，不是法典。Writer 讀完後判斷不合用而未採用某項 Skill 推薦，本身不構成偏離，不得據以列 issue 或要求記入 `deviations`。
 
 #### ③ 風險導向審查
 
 **核心必查**（不論被測目標為何）：
 
-- [ ] 每個公開方法是否至少有 1 個正常路徑測試
+- [ ] 交接檔案 `methodsToTest` 中的每個方法是否至少有 1 個正常路徑測試（**`excludedMethods` 不在審查範圍**，不得因其無測試而標記）
 - [ ] **建構子測試覆蓋（強制）**：讀被測目標原始碼列出**明確宣告的所有 public 建構子**（含無參數建構子、**只委派給其他建構子者**如 `OrderValidator() : this(TimeProvider.System)`、以及每個多載），確認每個至少有一個對應測試。缺者一律列入 `missingTestCases`，`category` 為 `coverage`，**severity 依缺漏來源分流**：
   - 分析報告的 `suggestedTestScenarios` **有**對應的 `Constructor_` 場景，但測試檔沒有對應測試，且 `writer-result.deviations` 未記錄理由 → **`error`**。這不是覆蓋缺口而是**契約違反**——Writer 略過了已列管的場景又未記錄偏離
   - 分析報告**沒有**列出該建構子場景，是你讀原始碼才發現的 → **`warning`**（單純的覆蓋缺口）
@@ -169,9 +159,9 @@ permissionMode: bypassPermissions
 - [ ] 是否有邊界條件測試（null、空集合、極值）
 - [ ] 是否有例外情境測試（`throw` 路徑）
 - [ ] 分支邏輯是否都有對應的測試案例
-- [ ] 斷言是否精確描述預期（避免 `.Should().NotBeNull()` 就結束）
+- [ ] 斷言是否精確描述預期（避免 `.Should().NotBeNull()` 就結束）。**例外**：被測類別建構子的「建立成功」場景，可觀察行為只有建構不拋例外，`act.Should().NotThrow()` 即為正確且唯一的斷言，不得因只有這一個斷言而標記；反之以 `sut.Should().NotBeNull()` 作結的建構子測試屬恆真斷言（`new` 要嘛拋例外、要嘛非 null），標 `warning`
 - [ ] 集合斷言是否使用 `.Should().HaveCount()`、`.Should().Contain()` 等
-- [ ] 例外斷言是否使用 `.Should().ThrowAsync<T>()` / `.Should().Throw<T>()`
+- [ ] 例外斷言是否使用 `.Should().ThrowAsync<T>()` / `.Should().Throw<T>()`（不得用 `.ThrowExactly<T>()`）
 - [ ] 是否避免一個測試方法中有過多不相關的斷言
 - [ ] 命名是否清楚表達被測試的行為
 - [ ] 是否避免使用模糊詞彙（如 `Test1`、`Works`、`ShouldWork`）
@@ -190,7 +180,7 @@ permissionMode: bypassPermissions
 | `targetType === "validator"` 且 `validatorInfo.nestedValidators[]` 非空 | 巢狀 Validator 覆蓋率（見下） |
 | `targetType === "validator"` 且 `crossFieldRules[]` 或 `customMethods[]` 非空 | 條件式規則覆蓋率（見下）—— **失敗與成功分支各須有測試** |
 | `targetType === "legacy"` | Legacy 命名與斷言一致性（見下） |
-| 分析報告含 `legacyInfo.productionRefactorSuggestion` | Production 重構 opt-in 旗標（見下） |
+| 分析報告的 `legacyInfo` 指出生產程式碼問題 | 生產程式碼觀察（見下） |
 
 **Mock 品質**
 
@@ -233,14 +223,14 @@ permissionMode: bypassPermissions
 - [ ] **Legacy Code 命名一致性**：當被測目標依賴靜態資料時，測試名稱的「預期」是否與 Assert 斷言一致（如名稱說「應回傳true」但 Assert 是 `BeFalse()` = **error 級別**）
 - [ ] **Characterization Test 命名**：Legacy Code 測試名稱是否描述「實際觸發的行為」而非「無法驗證的預期邊界」
 
-**Production 重構 opt-in 旗標**
+**生產程式碼觀察**
 
-> ℹ️ 當 Analyzer 報告的 `legacyInfo.productionRefactorSuggestion` 存在時執行此步驟。
+> ℹ️ 審查過程中發現疑似生產程式碼問題時執行此步驟（不限來源：Analyzer 的 `legacyInfo`、你讀原始碼發現的、或 Executor 的 `productionObservations[]`）。
 
-此情境（直接 File.IO + 硬編絕對路徑 + 無 IFileSystem）下，測試只能用真實 File.IO + 凌亂 workaround（建目錄、保護段、跨平台脆弱），品質先天受限。此問題的**根因在 production code，不在測試**，因此**不可**因此扣測試的分數到不合理程度。
+問題根因在 production code 時，**不得**因此把測試分數扣到不合理程度——測試品質先天受該問題所限。
 
-- 在回傳 JSON 加入 **`productionRefactorOptIn`** 欄位（**顯著呈現、與一般 `issues`/`suggestion` 區隔**），內容直接取自 `productionRefactorSuggestion`，並明確標示：「**此為需使用者同意的 production 重構建議**——若同意，可注入 `IFileSystem` 取代直接 `File.*`，測試即可改用 `MockFileSystem`、跨平台且不再真實寫檔。**未經同意不修改 production。**」
-- 對於「因硬編路徑/真實寫檔而被迫產生的 workaround」相關 issue，severity 最高標 `warning`（不標 `error`），並在 `description` 註明「根因為 production 硬編路徑，見 productionRefactorOptIn」。
+- 在回傳 JSON 加入 **`productionObservations[]`**（**顯著呈現、與一般 `issues`／`suggestion` 區隔**），每筆 `{ file, location, issue, options[] }`。**只描述、不修改**；沒有發現時輸出 `[]`，不得省略此欄位。
+- 根因為 production 問題而被迫產生的 workaround，相關 issue severity 最高標 `warning`（不標 `error`），並在 `description` 註明「根因為生產程式碼問題，見 productionObservations」。
 
 ### Step 4：產生審查報告
 
@@ -254,9 +244,9 @@ permissionMode: bypassPermissions
 {
   "overallScore": "B+",
   "summary": "測試結構良好，命名大多符合規範，但部分斷言可以更精確，且缺少 2 個邊界條件測試。",
-  "skillsConsulted": [
+  "skillsLoaded": [
     "test-naming-conventions",
-    "awesome-assertions-guide",
+    "awesome-assertions",
     "unit-test-fundamentals",
     "nsubstitute-mocking"
   ],
@@ -302,6 +292,9 @@ permissionMode: bypassPermissions
     "ProcessOrder_WhenPaymentFails_ShouldNotSendConfirmationEmail",
     "ProcessOrder_WithZeroQuantity_ShouldThrowArgumentException"
   ],
+  "deviationReview": [
+    { "rule": "AutoFixture 優先", "verdict": "成立", "note": "被測方法只吃兩個純量參數，AutoFixture 反增雜訊" }
+  ],
   "positives": [
     "AAA Pattern 結構清晰，每個測試都有 // Arrange、// Act、// Assert 註解",
     "Mock 設定與介面簽章完全一致",
@@ -310,15 +303,16 @@ permissionMode: bypassPermissions
 }
 ```
 
-> **選用欄位 `productionRefactorOptIn`**（僅在分析報告含 `legacyInfo.productionRefactorSuggestion` 時加入，見 Step 3 的「Production 重構 opt-in 旗標」）：
+> **必填欄位 `productionObservations`**（見 Step 3 的「生產程式碼觀察」；無發現時為 `[]`）：
 > ```json
-> "productionRefactorOptIn": {
->   "issue": "硬編 Windows 路徑 + 直接 File.IO，無法跨平台測試",
->   "location": "GenerateReport 第 41 行",
->   "hardcodedPath": "C:\\Reports\\",
->   "recommendation": "建構式注入 IFileSystem 取代直接 File.*，測試即可改用 MockFileSystem",
->   "note": "此為需使用者同意的 production 重構建議；未經同意不修改 production。同意後測試可跨平台且不再真實寫檔。"
-> }
+> "productionObservations": [
+>   {
+>     "file": "src/MyApp/Services/LegacyReportGenerator.cs",
+>     "location": "GenerateReport 第 41 行",
+>     "issue": "硬編 Windows 絕對路徑 + 直接 File.IO，測試無法跨平台且必須真實寫檔",
+>     "options": ["建構式注入 IFileSystem 取代直接 File.*", "路徑改由設定注入"]
+>   }
+> ]
 > ```
 
 ### 評分標準

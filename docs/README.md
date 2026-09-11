@@ -19,7 +19,7 @@
 | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | [overview.md](architecture/overview.md)                                 | 整體架構圖（系統架構、Agent 分組、工作流程、循序圖）                              |
 | [unit-orchestrator.md](architecture/unit-orchestrator.md)               | 單元測試 Orchestrator：Agent Skills、工作流程細節、規則分層                       |
-| [integration-orchestrator.md](architecture/integration-orchestrator.md) | 整合測試 Orchestrator：Container 技術、生產程式碼修正授權                         |
+| [integration-orchestrator.md](architecture/integration-orchestrator.md) | 整合測試 Orchestrator：Container 技術、生產程式碼問題回報                         |
 | [aspire-orchestrator.md](architecture/aspire-orchestrator.md)           | Aspire 測試 Orchestrator：DistributedApplicationTestingBuilder、Resource 命名規則 |
 | [tunit-orchestrator.md](architecture/tunit-orchestrator.md)             | TUnit 測試 Orchestrator：Source Generator 架構、xUnit 遷移檢查清單                |
 

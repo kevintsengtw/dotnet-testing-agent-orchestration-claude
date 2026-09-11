@@ -7,6 +7,7 @@ tools:
   - Glob
   - Bash
 model: sonnet
+effort: high
 maxTurns: 50
 permissionMode: bypassPermissions
 ---
@@ -30,7 +31,7 @@ permissionMode: bypassPermissions
 2. **被測試 API 的專案路徑**（必要）— 如 `src/MyProject.WebApi`
 3. **AppHost 專案路徑**（必要）— 如 `src/MyProject.AppHost`
 4. **`analysisFilePath`**（主要）— Analyzer 交接檔案路徑，我會在 Step 0 讀取此檔案提取 `suggestedTestScenarios`、`resources`、`apiProjectInfo`、`sourceCodeContext` 等
-5. **`writerResultFilePath`**（可選）— Writer 交接檔案路徑，用於取得 `testClasses`、`testCount` 等
+5. **`writerResultFilePath`**（可選）— Writer 交接檔案路徑，用於取得 `testClasses`、`testMethodCount`、`testCaseCount` 等
 6. **`executorResultFilePath`**（可選）— Executor 交接檔案路徑，用於取得測試執行結果
 
 > **向下相容**：如果呼叫者未提供交接檔案路徑，而是直接在 prompt 中傳遞 Analyzer 分析報告 JSON 和 Executor 摘要，則跳過 Step 0，直接使用 prompt 中的資訊。
@@ -48,8 +49,8 @@ permissionMode: bypassPermissions
 使用 Read 工具讀取所有可用的交接檔案：
 
 1. **`analysisFilePath`**（必要）→ 取得 `suggestedTestScenarios`、`resources`、`apiProjectInfo`（含 `endpoints`）、`sourceCodeContext`、`appHostInfo`
-2. **`writerResultFilePath`**（可選）→ 取得 `testFilePaths`、`testClasses`、`testCount`
-3. **`executorResultFilePath`**（可選）→ 取得 `testResult`、`totalTests`、`passedTests`、`failedTests`、`fixHistory`
+2. **`writerResultFilePath`**（可選）→ 取得 `testFilePaths`、`testClasses`、`testMethodCount`、`testCaseCount`、`skillsLoaded`、`deviations`
+3. **`executorResultFilePath`**（可選）→ 取得 `testResult`、`totalTests`、`passedTests`、`failedTests`、`fixHistory`、`productionObservations`
 
 > **向下相容**：僅當呼叫者未提供任何交接檔案路徑時，才使用 prompt 中直接傳遞的資訊。
 
@@ -102,10 +103,10 @@ permissionMode: bypassPermissions
 | 識別碼 | SKILL.md 路徑 | 用途 |
 |-------|-----------|------|
 | `test-naming-conventions` | `.agents/skills/dotnet-testing-test-naming-conventions/SKILL.md` | 命名規範審查 |
-| `awesome-assertions-guide` | `.agents/skills/dotnet-testing-awesome-assertions-guide/SKILL.md` | 斷言品質審查 |
+| `awesome-assertions` | `.agents/skills/dotnet-testing-awesome-assertions-guide/SKILL.md` | 斷言品質審查 |
 | `aspire-testing` | `.agents/skills/dotnet-testing-advanced-aspire-testing/SKILL.md` | Aspire 測試結構審查 |
 
-**read-scope**：上表以外的 Skill 一律不得載入 —— 不得載入任何 orchestration Skill、其他 workflow 專用 Skill，也不得讀取其他 agent 定義檔。
+**read-scope**：上表以外的 Skill 一律不得載入 —— 不得載入任何 orchestration Skill、其他 workflow 專用 Skill，也不得讀取其他 agent 定義檔——**唯一例外是對應 Writer 的定義檔，且僅限查閱其契約層與建議層清單**（那份清單只存在於該檔，是你逐條核對偏離的依據）。
 
 ### Step 2：讀取測試檔案與原始碼
 
@@ -143,6 +144,7 @@ Step 0 讀取的 analysis JSON 中包含 `sourceCodeContext`，**直接使用這
 | 測試類別命名 | `{功能}Tests` 或 `{Controller}Tests` |
 | 測試方法命名 | 中文三段式 `端點操作_情境_預期` |
 | 方法命名語意 | 情境與預期必須明確、具體 |
+| **英文識別字殘留** | 情境與預期段出現連續 3 個以上英文字母，且屬**識別字**（屬性名、參數名、欄位名、路徑片段）而非**值或型別**即違反。白名單：回應型別名、例外型別名、列舉值、語言字面值（`為null`、`true`）、HTTP 標頭與協定名、Resource 與服務名稱。**含直接採用自 `suggestedTestScenarios` 者**。❌ `Create_CustomerId為空_應回傳400ValidationProblemDetails` → ✅ `Create_客戶編號為空_應回傳400ValidationProblemDetails` |
 
 ### 4b. 斷言品質審查
 
@@ -150,7 +152,7 @@ Step 0 讀取的 analysis JSON 中包含 `sourceCodeContext`，**直接使用這
 |---------|------|
 | 使用 AwesomeAssertions | 不可使用 xUnit 原生斷言 |
 | HTTP 狀態碼斷言 | 必須使用專用擴充方法（`.Be200Ok()` 等），不得使用 `.HaveStatusCode()` |
-| ProblemDetails 完整驗證 | 驗證 Status、Title、Errors |
+| ProblemDetails 驗證 | 依 Writer 建議層第 4 條：400 回應驗 `Errors` 的 key 與訊息內容 |
 | 集合斷言 | 使用 `.Should().HaveCount(n)` 等 |
 
 ### 4c. 測試結構審查
@@ -158,7 +160,7 @@ Step 0 讀取的 analysis JSON 中包含 `sourceCodeContext`，**直接使用這
 | 檢查項目 | 規則 |
 |---------|------|
 | AAA 模式 | 清晰區分 Arrange / Act / Assert |
-| Collection Fixture | 必須有 `[Collection("Aspire")]` |
+| Collection Fixture | 測試類別標有 `[Collection(...)]`（名稱常數化亦可，見 `aspire-testing` Skill 範本） |
 | DistributedApplicationTestingBuilder | 必須使用 `CreateAsync<T>()` |
 | HttpClient 取得方式 | 必須使用 `app.CreateHttpClient("servicename")` |
 | 測試隔離 | 每個測試獨立 |
@@ -185,7 +187,6 @@ Step 0 讀取的 analysis JSON 中包含 `sourceCodeContext`，**直接使用這
 | unused using | 不可有未使用的 `using` |
 | 重複 using | GlobalUsings.cs 已引入的不得重複 |
 | System.Net.Http.Json | 正確使用 HTTP 擴充方法 |
-| 目錄結構 | 必須有 `Infrastructure/` + `Integration/` |
 
 ### 4f. 覆蓋率審查
 
@@ -208,11 +209,19 @@ Step 0 讀取的 analysis JSON 中包含 `sourceCodeContext`，**直接使用這
 - [ ] 物件比較斷言是否跨檔案一致（**應統一使用 `BeEquivalentTo()`** —— 此為範本與 orchestrator 風格指令的規定方向；逐一屬性斷言僅在驗證單一特定欄位時使用。**不得建議改成與指令相反的方向**）
 - [ ] `using` 排列順序和組織方式是否跨檔案一致
 
+### 4h. 偏離審查
+
+> ℹ️ 讀 `writer-result.deviations`，逐筆判定：成立／部分成立／不成立；未記錄的建議層偏離另列；`deviations` 為 `[]` 時明說「無偏離紀錄」。有記錄且理由成立不算缺失。
+>
+> **不得建議與建議層相反的方向。** 契約層（Writer 定義檔「契約層（不可偏離）」）另計，違反即 FAIL，不接受理由。
+
+> **「未記錄的建議層偏離」以 Writer 定義檔所列的建議層條目為限。** Skill 的推薦做法不是建議層——Skill 是知識來源，不是法典。Writer 讀完後判斷不合用而未採用某項 Skill 推薦，本身不構成偏離，不得據以列 issue 或要求記入 `deviations`。
+
 ---
 
 ## 審查報告格式
 
-使用 Markdown 格式，包含：審查摘要表格、詳細發現（含檔案名/行號/修正範例）、審查結論（總測試數、合規率、評級）。
+使用 Markdown 格式，包含：審查摘要表格、詳細發現（含檔案名/行號/修正範例）、審查結論（總測試數、合規率、評級），以及「生產程式碼觀察」段落——逐筆列出審查中發現的 `src/`／AppHost 問題（檔案、位置、問題、可能的處理方式），**只描述、不修改**，無發現時明說。根因在生產程式碼的缺陷，相關發現最高標 WARN。
 
 ---
 
@@ -232,7 +241,7 @@ Step 0 讀取的 analysis JSON 中包含 `sourceCodeContext`，**直接使用這
 
 1. **只審查，不修改** — 只產出審查報告
 2. **必定先載入 Skills**
-3. **依據 Skills 判斷** — 以 Skill 內容為準
+3. **依據 Skills 判斷** — 以 Skill 內容為準。**Skill 是判斷依據，不是對照清單**：契約層以外的技術取捨屬 Writer 判斷，偏離有記錄且理由成立就不是缺失
 4. **具體指出位置** — 標注檔案名和行號
 5. **提供修正範例** — ❌/✅ 對照
 6. **Aspire 特定審查是核心** — 4d 面向是獨有價值

@@ -98,8 +98,8 @@ Agent(subagent_type="dotnet-testing-reviewer", prompt="...")
 - ❓ 我是否正在嘗試撰寫 C# 程式碼？→ **停止，交給 Writer**
 - ❓ 我是否正在嘗試執行 `dotnet build` 或 `dotnet test`？→ **停止，交給 Executor**
 
-- ❓ 我已貼出耗時表、正要進入 Phase 5 或輸出收尾提示？→ **停止，Token 表格必須先貼**（⛔ 只跑指令不貼 = 未完成）
-- ❓ 我已貼出 Token 表格、正準備結束回覆？→ **停止，還有 Phase 5 後置清理，且必須輸出其狀態行**
+- ❓ 我正要進入 Phase 5 或輸出收尾提示？→ **停止，`report` 的兩張表格必須先貼**（⛔ 只跑指令不貼 = 未完成）
+- ❓ 我已貼出兩張表格、正準備結束回覆？→ **停止，還有 Phase 5 後置清理，且必須輸出其狀態行**
 
 **在收到每個 subagent 的回傳結果之前，不得採取任何程式碼相關行動。**
 
@@ -109,7 +109,7 @@ Agent(subagent_type="dotnet-testing-reviewer", prompt="...")
 
 > ⚠️ **不需要在 subagent prompt 中嵌入完整分析報告 JSON、被測類別路徑、dependency 清單、suggestedTestScenarios、existingTestInfrastructure、targetType 等內容**。每個 subagent 已有 Step 0 讀取交接檔案的能力，可自行取得所有資訊。
 >
-> Orchestrator prompt 只需傳：**交接檔案路徑 + 摘要數字**（methodCount、scenarioCount、testCount 等）+ 必要的控制參數（modification request 等）。
+> Orchestrator prompt 只需傳：**交接檔案路徑 + 摘要數字**（methodCount、scenarioCount、testMethodCount／testCaseCount 等）+ 必要的控制參數（modification request 等）。
 
 ---
 
@@ -130,7 +130,7 @@ Agent(subagent_type="dotnet-testing-reviewer", prompt="...")
 Phase 0 清理完成後、**啟動 Analyzer 之前**，以 **Bash 工具**執行一次（best-effort：失敗或無輸出即略過，不影響流程）：
 
 ```bash
-node .claude/scripts/token-usage/token_usage.js start unit 2>/dev/null
+node .claude/scripts/dotnet-testing-claude-full/token_usage.js start unit 2>/dev/null
 ```
 
 這標記本次工作流程的 token 計量起點，使 **Phase 0 清理用的 Executor 不被計入** token 統計，主執行緒也只計階段 1 之後。此呼叫**不是探索**（不讀原始碼、不 Grep），不受「啟動 Analyzer 前不得探索」限制。
@@ -180,12 +180,14 @@ userProvidedScenarios:
 
 > ⚠️ `analysisOutputPath` 必須由 Orchestrator 計算並提供。計算方式：從測試專案路徑去掉 `.csproj` 檔名，拼接 `.orchestrator/analysis/{ClassName}.analysis.json`。Analyzer **不需要自行推導路徑**。
 
+> **等待 subagent 完成**：Agent tool 以背景啟動時，工具呼叫會立即返回、完成後由系統通知你。**直接等通知即可**——不要用 `sleep`、`echo waiting`、輪詢迴圈或 `until [ -f ... ]` 檢查交接檔落地。這些做法沒有作用，只會多出雜訊。等待期間若要輸出文字，一律繁體中文。
+
 **等候 Analyzer 回傳精簡摘要**，包含：
 
 - `className`、`targetType`、`methodCount`、`scenarioCount`、`methodScenarioCounts`
 - `analysisFilePath`：Analyzer 實際寫入的交接檔案路徑（應與 `analysisOutputPath` 一致）
 - `projectContext`
-- **`scenarioSource`、`adoptedMethods`、`excludedMethods`**（僅採用模式時出現，見下方「結果整合與呈現」段落的採用摘要項目）
+- **`excludedMethods`**（一律出現，無排除時為 `[]`）與 **`scenarioSource`、`adoptedMethods`**（僅採用模式時出現）——見下方「結果整合與呈現」的範圍摘要項目
 
 **驗證交接檔案**：收到 Analyzer 摘要後，使用 Glob 確認 `analysisFilePath` 指向的檔案確實存在。若不存在，說明 Analyzer 未正確寫入，需排查問題。
 
@@ -212,7 +214,7 @@ analysisFilePath: {analysisFilePath}
 被測試目標的檔案路徑: {filePath}
 測試檔案的預期輸出路徑: {outputPath}
 ```
-**等候 Writer 回傳精簡摘要**：`testFilePaths`、`testCount`、`skillsConsulted`、`writerResultFilePath`
+**等候 Writer 回傳精簡摘要**：`testFilePaths`、`testMethodCount`、`testCaseCount`、`skillsLoaded`、`writerResultFilePath`
 
 ### 階段 3：啟動執行（Test Executor）
 
@@ -234,6 +236,8 @@ analysisFilePath: {analysisFilePath}
 writerResultFilePath: {writerResultFilePath}
 ```
 > ⚠️ 禁止在 Executor prompt 中嵌入測試程式碼、NuGet 套件清單等內容。
+
+> **同專案多目標時**：不要把多個路徑逗號合併塞進單值欄位。改為每個目標一組完整欄位（測試檔案路徑 + `analysisFilePath` + `writerResultFilePath`），在同一個 prompt 中逐組列出，並明寫「逐個目標以 `dotnet test --filter` 對帳，各自寫一份 executor-result」。
 
 **等候 Executor 回傳精簡摘要**：`totalTests`、`passedTests`、`failedTests`、`fixRounds`、`executorResultFilePath`
 
@@ -302,31 +306,19 @@ node -e "const fs=require('fs'),p='{testProjectDir}/.orchestrator/executor-resul
 
 ## 執行進度顯示規範
 
-### 時間追蹤方式（Hook 自動化）
-
-時間追蹤由 **PreToolUse / PostToolUse hooks** 自動處理。每次呼叫 Agent tool 時：
-
-- **PreToolUse hook** 會在 `additionalContext` 中注入開始時間，格式：`⏱ {subagent_type} 開始：{HH:MM:SS}`
-- **PostToolUse hook** 會在 `additionalContext` 中注入完成時間與耗時，格式：`⏱ {subagent_type} 完成：{HH:MM:SS}（開始：{HH:MM:SS}，耗時 M 分 S 秒）`
-
-**你不需要手動呼叫 `Bash(date)` 取得時間。** Hook 注入的時間資訊會自動出現在 Agent tool 的回傳結果中。
-
-> 如果 hook 未安裝（`additionalContext` 中沒有時間資訊），流程仍可正常執行，僅缺少時間追蹤顯示。
-
 ### 各階段必要輸出
 
 | 動作時機 | 必輸出文字 |
 |---------|----------|
 | 啟動 Analyzer **前** | `## 階段 1：啟動分析（Analyzer）` |
-| Analyzer 回傳後 | `✅ 階段 1 完成（{hook 注入的耗時}）— 識別出 N 個方法、Y 個依賴，需要 [技術清單]` |
+| Analyzer 回傳後 | `✅ 階段 1 完成 — 識別出 N 個方法、Y 個依賴、Z 個場景` |
 | 啟動 Writer **前** | `## 階段 2：啟動撰寫（Test Writer）` |
-| Writer 回傳後 | `✅ 階段 2 完成（{hook 注入的耗時}）— 已建立測試檔案，共 N 個測試案例` |
+| Writer 回傳後 | `✅ 階段 2 完成 — 已建立測試檔案，共 N 個測試案例` |
 | 啟動 Executor **前** | `## 階段 3：啟動執行（Test Executor）` |
-| Executor 回傳後 | `✅ 階段 3 完成（{hook 注入的耗時}）— N 個測試案例通過，修正 Y 次` |
+| Executor 回傳後 | `✅ 階段 3 完成 — N 個測試案例通過，修正 Y 次` |
 | 啟動 Reviewer **前** | `## 階段 4：啟動審查（Test Reviewer）` |
-| Reviewer 回傳後 | `✅ 階段 4 完成（{hook 注入的耗時}）` |
-| **結果呈現後** | 輸出 `### ⏱ 各階段耗時` 表格（見下方格式） |
-| **耗時表之後** | 執行 `report` 指令並**把其 stdout 表格貼進回覆**（⛔ 只跑不貼 = 未完成；見「📊 Token 用量」段） |
+| Reviewer 回傳後 | `✅ 階段 4 完成` |
+| **結果呈現後** | 執行 `report` 指令並**把其 stdout 的兩張表格（Token 用量、各階段耗時）貼進回覆**（⛔ 只跑不貼 = 未完成；見「📊 Token 用量」段） |
 | **Token 表格之後**（真正最後一步）| 執行 Phase 5 後置清理，並輸出其狀態行（⛔ 必須輸出；該行缺席時以磁碟狀態判定，不得逕判流程未完成 — 見「Phase 5：後置清理」段） |
 
 ---
@@ -341,30 +333,13 @@ node -e "const fs=require('fs'),p='{testProjectDir}/.orchestrator/executor-resul
 2. **執行結果摘要**：Executor 的 `dotnet test` 是否全數通過、有幾個測試案例
 3. **品質審查摘要**：Reviewer 的 `overallScore` 和關鍵 `issues`
 4. **改善建議**（如果有的話）：Reviewer 的 `missingTestCases` 和 severity=warning 以上的問題
-5. **Writer 的技術選擇**：列出 `skillsConsulted`（Writer 實際讀取了哪些 Skill），以及 `deviations`（偏離預設做法的項目與理由）。**`deviations` 為空時也必須明說「未偏離預設做法」**——技術選擇權交還給 Writer 之後，這是使用者判斷它選得對不對的唯一依據
+5. **Writer 的技術選擇**：列出 `skillsLoaded`（Writer 實際讀取了哪些 Skill），以及 `deviations`（偏離預設做法的項目與理由）。**`deviations` 為空時也必須明說「未偏離預設做法」**——技術選擇權交還給 Writer 之後，這是使用者判斷它選得對不對的唯一依據
 6. **Executor 修正紀錄**（如果有的話）：Executor 修正了哪些編譯/執行錯誤
-7. **採用摘要**（僅當 Analyzer 回傳 `scenarioSource === "adopted"` 時）：明確呈現「本次採用使用者提供的場景，涵蓋方法：{adoptedMethods}；未涵蓋而排除：{excludedMethods}（本次未納入測試）」。**不得省略排除清單**——這是使用者判斷本次涵蓋範圍是否符合預期的唯一依據
+7. **範圍摘要**：呈現本次涵蓋範圍與 `excludedMethods`——「未涵蓋而排除：{excludedMethods}（本次未納入測試）」，`[]` 時明說「被測類別的公開方法全數納入」。採用模式另加一句「本次採用使用者提供的場景，涵蓋方法：{adoptedMethods}」。**不得省略排除清單**——這是使用者判斷本次涵蓋範圍是否符合預期的唯一依據
 8. **`.csproj` 變動**：彙整所有 Writer 回傳的 `nugetChanges` 逐筆列出（套件名 + 版本 前→後）。**即使為空也必須明說「`.csproj` 未變動」**——測試專案的套件基線被改動卻未告知，使用者無從察覺；「沒提」與「沒改」不得由使用者自行推斷
-9. **非測試程式碼變更**：若本次流程修改了測試專案以外的任何檔案（`src/` 下的生產程式碼、AppHost 設定等），必須逐一列出檔案路徑、變更摘要與變更原因（如 skill 規則明文要求）。**即使未修改也必須明說「未修改測試專案以外的檔案」**——`src/` 變更比 `.csproj` 更需要使用者知情，「沒提」與「沒改」不得由使用者自行推斷
-10. **各階段耗時摘要**：結果呈現結束後，**必須**輸出以下格式的耗時表格（從 hook 注入的耗時資訊中取得各階段時間）
+9. **生產程式碼觀察**：呈現 Executor／Reviewer 回傳的 `productionObservations[]`（每筆含 `file`、`location`、`issue`、`options[]`）。本流程**不修改 `src/`**；有觀察時逐筆列出並**等使用者決定**，沒有時明說「未發現生產程式碼問題」。
 
-**結果呈現完畢後，必須緊接著輸出耗時摘要（不可省略）：**
-
-```markdown
-### ⏱ 各階段耗時
-
-| 階段 | 耗時 |
-|------|------|
-| 階段 1 Analyzer | M 分 S 秒 |
-| 階段 2 Writer   | M 分 S 秒 |
-| 階段 3 Executor | M 分 S 秒 |
-| 階段 4 Reviewer | M 分 S 秒 |
-| **總計**        | **M 分 S 秒** |
-```
-
-> 各階段耗時從 PostToolUse hook 注入的 `additionalContext` 中取得（格式：`耗時 M 分 S 秒`）。若多個 Writer 並行，階段 2 耗時取最長的一個。總計為四個階段之和。
-
-### 📊 本次工作流程 Token 用量（強制輸出，不可省略）
+### 📊 本次工作流程 Token 用量與各階段耗時（強制輸出，不可省略）
 
 ⛔ **只跑指令、沒把表格貼進可見回覆 = 未完成。**
 ⛔ **這不是流程的結尾。** 貼出表格之後，仍須執行 Phase 5 後置清理並輸出其狀態行，該狀態行才是回覆的最後一行。
@@ -373,16 +348,16 @@ Bash 的 stdout **不會自動顯示給使用者**，必須由你親手複製貼
 1. 以 **Bash 工具**執行（此步只取得資料，使用者還看不到）：
 
    ```bash
-   node .claude/scripts/token-usage/token_usage.js report unit 2>/dev/null
+   node .claude/scripts/dotnet-testing-claude-full/token_usage.js report unit 2>/dev/null
    ```
 
-2. **立即在你的回覆中，把該指令 stdout 的整段 Markdown 表格（從 `### 📊 本次測試工作流程 Token 用量` 到 `>` 開頭的備註）一字不改、完整貼出**，作為給使用者看的最終結果。
+2. **立即在你的回覆中，把該指令 stdout 的兩張 Markdown 表格（`### 📊 本次測試工作流程 Token 用量` 與 `### ⏱ 各階段耗時`，各自到 `>` 開頭的備註為止）一字不改、完整貼出**，作為給使用者看的最終結果。
 3. ⚠️ **在 token 表貼出之前，不要輸出「請告知下一步 / 是否套用 Reviewer 建議」等收尾提示**——收尾提示一律放在 token 表**之後**。
 4. 只有當指令真的無輸出或失敗（本機未產生 transcript）時，才可略過本段。
 
-> 自我檢查（結束前必問）：**「我是否已把 report 指令的 stdout 表格貼進可見回覆？」** 若否 → 立即補貼，不得結束。
+> 自我檢查（結束前必問）：**「我是否已把 report 指令 stdout 的兩張表格都貼進可見回覆？」** 若否 → 立即補貼，不得結束。
 
-> **表格缺席時的判讀**：Token 表格缺席**不代表流程異常** —— 四階段的成敗一律以 Executor 回報與磁碟狀態為準。缺席只代表本次沒有 token 資料可看；transcript 仍在，使用者可自行執行 `node .claude/scripts/token-usage/token_usage.js report unit` 補取。**不得因表格缺席而重跑整個工作流程。**
+> **表格缺席時的判讀**：Token 表格缺席**不代表流程異常** —— 四階段的成敗一律以 Executor 回報與磁碟狀態為準。缺席只代表本次沒有 token 資料可看；transcript 仍在，使用者可自行執行 `node .claude/scripts/dotnet-testing-claude-full/token_usage.js report unit` 補取。**不得因表格缺席而重跑整個工作流程。**
 
 - 統計涵蓋 Orchestrator 主執行緒 ＋ 本次所有 `dotnet-testing-*` subagent；input 分純 input／cache 寫入／cache 讀取，另有含快取合計與 output。
 - 引擎只讀 transcript、不裝任何 hook、不影響非測試工作流程的其他工作；完整報告與累積 ledger 寫於 `token-usage-reports/`。詳見 `docs/TOKEN_USAGE_GUIDE.md`。
@@ -395,9 +370,7 @@ Bash 的 stdout **不會自動顯示給使用者**，必須由你親手複製貼
 
 當使用者要求套用 Reviewer 建議、修改既有測試、或增加測試案例時，使用此流程（而非重新執行完整四階段）。
 
-> **Production 重構 opt-in（Legacy 跨平台）**：當 Reviewer 回傳 `productionRefactorOptIn` 欄位時（被測類別有硬編絕對路徑 + 直接 File.IO + 無 IFileSystem），Orchestrator 在結果中**顯著呈現此建議**，並明確告知這是**需使用者同意才執行的 production code 修改**（注入 `IFileSystem`）。
-> - **預設不修改 production**。流程照常產出當下可用的測試（在 Windows 上可跑的 Characterization Test），絕不自動改 production。
-> - 僅當**使用者明確同意**後，才啟動針對性修改：先讓 Writer/Executor 修改 production（建構式注入 `IFileSystem`、以 `_fileSystem.*` 取代直接 `File.*`），再重寫測試改用 `MockFileSystem`。此修改**會動到 `src/` 生產程式碼**，屬此流程的特例（一般修改流程禁止改 production）。
+> **`productionObservations[]` 的後續**：四階段流程一律不改 `src/`，只回報。使用者看過觀察、**明確要求**修改 `src/` 時，才走此修改流程處理該項；未經要求不得啟動。
 
 ### 流程（三階段）
 
@@ -444,7 +417,7 @@ Orchestrator 應在結果呈現的最後，提示使用者可用的操作：
 修改流程結果呈現後，**同樣執行 token 用量統計並親手貼出表格**（規則同主路徑「強制輸出」）：先以 Bash 工具執行下列指令，再把其 stdout 的整段 Markdown 表格**一字不改貼進可見回覆**（⛔ 只跑不貼 = 未完成）；收尾提示放在表格之後。表格與收尾提示之後，**仍須執行 Phase 5 後置清理並輸出其狀態行**，該狀態行才是回覆的最後一行。
 
 ```bash
-node .claude/scripts/token-usage/token_usage.js report unit 2>/dev/null
+node .claude/scripts/dotnet-testing-claude-full/token_usage.js report unit 2>/dev/null
 ```
 
 > 因計量起點 marker 不變，這次輸出的是**含本次修改的累計用量**（與初始 run 同一筆 ledger，數字累加）。
@@ -494,14 +467,14 @@ node .claude/scripts/token-usage/token_usage.js report unit 2>/dev/null
 | Phase 3 Executor | **循序** | 同專案 `dotnet build` 不可並行，需依序執行每個測試檔案 |
 | Phase 4 Reviewer | **平行** | 每份測試獨立審查，在同一回應中發出多個 Agent tool 呼叫 |
 
-> **`.csproj` 競態收斂（多目標）**：多目標時各類別的 Writer 仍可能並行觸及同一 `.csproj`。Phase 3 Executor 為**循序**、且在所有 Writer 之後執行——它會在建置時補齊缺漏套件（CS0246 → 加套件、NU1101 → 移除錯誤套件），作為 `.csproj` 的**最終收斂點**。因此即使並行 Writer 的 `.csproj` 寫入有 lost-update，Executor 仍會修正。
+> **`.csproj` 競態收斂（多目標）**：多目標時各類別的 Writer 仍可能並行觸及同一 `.csproj`。Phase 3 Executor 為**循序**、且在所有 Writer 之後執行——它會在建置時補齊缺漏套件（CS0246 → 加套件、NU1101 → 移除錯誤套件），作為 `.csproj` 的**最終收斂點**。因此即使並行 Writer 的 `.csproj` 寫入有 lost-update，Executor 仍會修正（實測另有一層：Edit 工具的 stale-read 檢查會直接擋下被覆蓋的寫入）。**並行時各 Writer 的 `nugetChanges` 記錄的是「本次流程對 `.csproj` 的變動」，非「該 Writer 親手寫入的部分」——彙整時取聯集，不對帳到個別 Writer。**
 
 ### 多目標結果彙整
 
 多目標完成後，在結果區塊中彙整呈現：
 
 1. **概覽表格**：列出每個目標的測試數量、通過/失敗狀態、品質評分
-2. **各目標詳細結果**：按目標分區展示（測試程式碼、執行結果、審查摘要）
+2. **各目標詳細結果**：按目標分區展示（測試檔案路徑、執行結果、審查摘要）
 3. **共用改善建議**：如果多個目標有相同的品質問題，合併建議
 
 ---

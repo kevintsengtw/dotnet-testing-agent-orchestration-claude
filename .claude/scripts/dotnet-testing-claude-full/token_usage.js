@@ -82,6 +82,24 @@ function addCommas(n) {
 }
 
 // ---------------------------------------------------------------------------
+// 耗時（取自 subagent transcript 的時間窗 hi − lo，不依賴 hook）
+// ---------------------------------------------------------------------------
+
+// 秒 → M:SS（超過一小時為 H:MM:SS）；非數字回 "—"。
+function fmtDuration(seconds) {
+  if (seconds === null || seconds === undefined || seconds === "") return "—";
+  const n = Number(seconds);
+  if (!Number.isFinite(n) || n < 0) return "—";
+  const t = Math.round(n);
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const sec = t % 60;
+  return h > 0
+    ? h + ":" + String(m).padStart(2, "0") + ":" + String(sec).padStart(2, "0")
+    : m + ":" + String(sec).padStart(2, "0");
+}
+
+// ---------------------------------------------------------------------------
 // run id
 // ---------------------------------------------------------------------------
 
@@ -200,8 +218,10 @@ function fileTimeRange(p) {
   return [lo, hi];
 }
 
-// 回傳 [{metaFile, jsonlFile, agentType, lo, hi}]，僅 dotnet-testing-* 前綴、排除清理任務。
-function listWorkflowSubagents(transcriptPath) {
+// 回傳 [{metaFile, jsonlFile, agentType, lo, hi, cleanup}]，僅 dotnet-testing-* 前綴。
+// 預設排除清理任務；opts.includeCleanup 為真時一併回傳並以 cleanup 旗標標示。
+function listWorkflowSubagents(transcriptPath, opts) {
+  const includeCleanup = !!(opts && opts.includeCleanup);
   const out = [];
   const sdir = subagentsDirFor(transcriptPath);
   let names;
@@ -221,13 +241,14 @@ function listWorkflowSubagents(transcriptPath) {
     }
     const at = String((meta && meta.agentType) || "");
     if (!at.startsWith(SUBAGENT_PREFIX)) continue;
-    // 排除清理任務（Phase 0 前置 / Phase 5 後置都用 Executor 做 cleanup）。
+    // 清理任務（Phase 0 前置 / Phase 5 後置都用 Executor 做 cleanup）不計入用量。
     const desc = String((meta && meta.description) || "").toLowerCase();
-    if (CLEANUP_MARKERS.some((mk) => desc.indexOf(mk) !== -1)) continue;
+    const cleanup = CLEANUP_MARKERS.some((mk) => desc.indexOf(mk) !== -1);
+    if (cleanup && !includeCleanup) continue;
     const jf = path.join(sdir, name.slice(0, -".meta.json".length) + ".jsonl");
     if (!fs.existsSync(jf)) continue;
     const [lo, hi] = fileTimeRange(jf);
-    out.push({ metaFile, jsonlFile: jf, agentType: at, lo, hi });
+    out.push({ metaFile, jsonlFile: jf, agentType: at, lo, hi, cleanup });
   }
   return out;
 }
@@ -307,7 +328,52 @@ function aggregate(transcriptPath, start, end) {
 
   const total = new Bucket();
   for (const k of Object.keys(scopes)) merge(total, scopes[k]);
-  return { scopes, models, subagents, total };
+  return { scopes, models, subagents, total, durations: collectDurations(transcriptPath, st, en) };
+}
+
+// 各 subagent 的耗時（hi − lo）與階段耗時：同階段時間窗重疊（平行）取最長者，
+// 完全不重疊（循序）則相加；總計為四階段取整後之和，使顯示值封閉。
+// cleanup 另列，不計入總計。
+function collectDurations(transcriptPath, st, en) {
+  const byRole = {};
+  const cleanups = [];
+  for (const s of listWorkflowSubagents(transcriptPath, { includeCleanup: true })) {
+    const { agentType, lo, hi, cleanup, jsonlFile } = s;
+    if (lo === null || hi === null) continue;
+    if (hi.getTime() < st || lo.getTime() > en) continue;
+    const parts = agentType.split("-");
+    const role = parts[parts.length - 1] || "subagent";
+    const seconds = (hi.getTime() - lo.getTime()) / 1000;
+    const row = { role, agentType, file: path.basename(jsonlFile), seconds, lo: lo.getTime(), hi: hi.getTime() };
+    if (cleanup) {
+      cleanups.push(row);
+      continue;
+    }
+    (byRole[role] || (byRole[role] = [])).push(row);
+  }
+  const phases = [];
+  let totalSeconds = 0;
+  for (const role of ROLE_ORDER) {
+    const rows = byRole[role];
+    if (!rows || !rows.length) continue;
+    const parallel = hasOverlap(rows);
+    const seconds = parallel
+      ? Math.max.apply(null, rows.map((r) => r.seconds))
+      : rows.reduce((a, r) => a + r.seconds, 0);
+    phases.push({ role, seconds, parallel, rows });
+    totalSeconds += Math.round(seconds);
+  }
+  return { phases, cleanups, totalSeconds };
+}
+
+// 同階段的任兩列 [lo, hi] 有交集即視為平行；單列一律視為平行（不影響取值）。
+function hasOverlap(rows) {
+  if (rows.length < 2) return true;
+  const sorted = rows.slice().sort((a, b) => a.lo - b.lo);
+  for (let i = 1; i < sorted.length; i += 1) {
+    if (sorted[i].lo < sorted[i - 1].hi) return true;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -334,7 +400,7 @@ function projectDir() {
     if (parent === p) break;
     p = parent;
   }
-  return path.resolve(__dirname, "..", "..", ".."); // 後備：token-usage → scripts → .claude → repo
+  return path.resolve(__dirname, "..", "..", ".."); // 後備：dotnet-testing-claude-full → scripts → .claude → repo
 }
 
 let _reportsDirOverride = null; // selftest 用：將報告/ledger 導向暫存目錄
@@ -471,6 +537,35 @@ function renderCompactTable(meta, result) {
   return L.join("\n");
 }
 
+// ⏱ 各階段耗時表：階段耗時＝同階段最長者（循序則相加），總計＝四階段取整後之和；cleanup 另列不計入。
+function renderDurationTable(result) {
+  const d = (result && result.durations) || { phases: [], cleanups: [], totalSeconds: 0 };
+  const L = [];
+  L.push("### ⏱ 各階段耗時");
+  L.push("");
+  L.push("| 階段 | 耗時 | 明細 |");
+  L.push("| --- | ---: | --- |");
+  if (!d.phases.length && !d.cleanups.length) {
+    L.push("| （無 subagent 紀錄） | — | — |");
+    return L.join("\n");
+  }
+  for (const ph of d.phases) {
+    const detail =
+      ph.rows.length > 1
+        ? ph.rows.map((r) => fmtDuration(r.seconds)).join(" / ") +
+          "（" + ph.rows.length + (ph.parallel ? " 個平行）" : " 個循序）")
+        : "";
+    L.push("| " + scopeLabel(ph.role) + " | " + fmtDuration(ph.seconds) + " | " + detail + " |");
+  }
+  L.push("| **總計** | **" + fmtDuration(d.totalSeconds) + "** | 四階段之和 |");
+  for (const c of d.cleanups) {
+    L.push("| cleanup（" + scopeLabel(c.role) + "） | " + fmtDuration(c.seconds) + " | 不計入總計 |");
+  }
+  L.push("");
+  L.push("> 耗時取自各 subagent transcript 的時間窗（最後一筆 − 第一筆）；階段耗時為同階段最長者，循序執行則相加。");
+  return L.join("\n");
+}
+
 function renderReportMd(meta, result) {
   const total = result.total;
   const scopes = result.scopes;
@@ -535,15 +630,21 @@ function renderReportMd(meta, result) {
   }
   if (subagents.length) {
     L.push("", "## Subagent 明細", "",
-      "| 檔案 | agentType | 純input | cache寫入 | cache讀取 | output |",
-      "| --- | --- | ---: | ---: | ---: | ---: |");
+      "| 檔案 | agentType | 耗時 | 純input | cache寫入 | cache讀取 | output |",
+      "| --- | --- | ---: | ---: | ---: | ---: | ---: |");
+    const durOf = {};
+    for (const ph of ((result.durations && result.durations.phases) || [])) {
+      for (const r of ph.rows) durOf[r.file] = r.seconds;
+    }
     for (const s of subagents) {
       L.push(
-        "| `" + s.file + "` | " + s.agentType + " | " + addCommas(s.pure_input) + " | " +
+        "| `" + s.file + "` | " + s.agentType + " | " + fmtDuration(durOf[s.file]) + " | " +
+        addCommas(s.pure_input) + " | " +
         addCommas(s.cache_write) + " | " + addCommas(s.cache_read) + " | " + addCommas(s.output) + " |"
       );
     }
   }
+  L.push("", "## 各階段耗時", "", renderDurationTable(result).split("\n").slice(1).join("\n").trim());
   L.push("", "## 備註", "",
     "- `cache 讀取` 為各回合累積讀取量（與 ccusage 同口徑），非唯一 token 數。",
     "- 涵蓋範圍：主 transcript（Orchestrator）＋ `subagents/` 中 `agentType` 以 " +
@@ -860,7 +961,7 @@ function skipMessage() {
     "（找不到當前 session transcript，略過 token 統計）\n" +
     `（診斷：${reason}；projectDir=${info.projectDir}；encodedDir存在=${info.encodedDirExists}；` +
     `jsonl數=${info.jsonlCount}；sessions-index=${info.hasSessionsIndex}。` +
-    "完整診斷：node .claude/scripts/token-usage/token_usage.js locate）\n"
+    "完整診斷：node .claude/scripts/dotnet-testing-claude-full/token_usage.js locate）\n"
   );
 }
 
@@ -920,7 +1021,7 @@ function cmdReport(framework, opts) {
   } catch (e) {
     /* 鐵則：寫檔失敗不影響輸出 */
   }
-  process.stdout.write(renderCompactTable(meta, result) + "\n");
+  process.stdout.write(renderCompactTable(meta, result) + "\n\n" + renderDurationTable(result) + "\n");
   return 0;
 }
 
@@ -1116,6 +1217,7 @@ module.exports = {
   fileStamp,
   encodeProjectPath,
   addCommas,
+  fmtDuration,
   newRunId,
   Bucket,
   merge,
@@ -1124,6 +1226,7 @@ module.exports = {
   fileTimeRange,
   listWorkflowSubagents,
   latestClusterStart,
+  collectDurations,
   aggregate,
   projectDir,
   setProjectDirOverride,
@@ -1137,6 +1240,7 @@ module.exports = {
   SCOPE_LABEL,
   orderedScopes,
   renderCompactTable,
+  renderDurationTable,
   renderReportMd,
   ledgerEntry,
   upsertLedger,

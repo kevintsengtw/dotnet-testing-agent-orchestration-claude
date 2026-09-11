@@ -8,6 +8,7 @@ tools:
   - Bash
   - Write
 model: sonnet
+effort: high
 maxTurns: 50
 permissionMode: bypassPermissions
 ---
@@ -99,11 +100,13 @@ permissionMode: bypassPermissions
 讀取目標類別後，**立即判斷其類型**：
 
 1. **檢查繼承鏈**：是否繼承 `AbstractValidator<T>`
-2. **檢查靜態依賴**：是否呼叫靜態方法（如 `Database.GetUser()`）、直接使用 `DateTime.Now`、直接使用 `File.*` / `Directory.*`
+2. **檢查是否依賴寫死靜態資料的類別**：呼叫自訂靜態類別的方法（如 `Database.GetUser()`），且該靜態類別內含寫死的資料
 3. 設定 `targetType` 欄位：
    - 繼承 `AbstractValidator<T>` → `"validator"`
-   - 有靜態依賴且無建構子注入 → `"legacy"`
+   - 依賴寫死靜態資料的類別 → `"legacy"`
    - 其他 → `"service"`
+
+> 直接使用 `DateTime.Now`、`File.*`／`Directory.*` 等 BCL 靜態成員**不構成 `legacy`**。`targetType` 為 `legacy` 時記入 `legacyInfo.directIoOperations`；其餘 `targetType` 沒有這個欄位，改由 Reviewer 在 `productionObservations[]` 回報，Analyzer 不另設欄位。
 
 #### 若 `targetType === "legacy"`：執行 Legacy Code 專用分析
 
@@ -111,17 +114,16 @@ permissionMode: bypassPermissions
 2. **讀取靜態類別原始碼**：找到靜態類別定義，**列出寫死的資料**（如 `_users` dictionary 的所有 key/value）
 3. **標記不可 Mock 的依賴**：靜態方法依賴標記為 `staticDependency: true`，不能被 NSubstitute Mock
 4. **識別直接 I/O 操作**：標記直接使用 `File.*`、`Directory.*`、`DateTime.Now` 的位置
-5. **偵測 production 重構機會（跨平台旗標）**：當被測類別**直接使用 `File.*`/`Directory.*`（非透過 `IFileSystem`）** 且**含硬編絕對路徑**（如 `C:\...` Windows 路徑）時，產生 `productionRefactorSuggestion` 旗標。此情境無法用 `MockFileSystem` 攔截、且在非 Windows 平台必定失敗，測試只能用真實 File.IO + 凌亂 workaround。**Analyzer 只偵測與標記，不修改 production、不中斷流程。**
+5. **記錄生產程式碼的可測試性問題**：例如直接使用 `File.*`/`Directory.*`（非透過 `IFileSystem`）且含硬編絕對路徑——此情境無法用 `MockFileSystem` 攔截、在非 Windows 平台必定失敗。逐項記入 `testabilityIssues[]`。**Analyzer 只偵測與描述，不修改 production、不中斷流程。**
 6. **輸出 `legacyInfo`**：
    - `staticDependencies[]`：靜態方法呼叫清單，每個包含 `{ className, methodName, filePath }`
    - `hardcodedData`：靜態類別中寫死的資料摘要（如使用者清單、交易資料等）
    - `directIoOperations[]`：直接 I/O 操作清單（File.WriteAllText、DateTime.Now 等）
    - `testabilityIssues[]`：可測試性問題清單（無法 Mock、無法控制時間、無法驗證檔案寫入等）
-   - `productionRefactorSuggestion`（**僅在偵測到上述情境時輸出**）：`{ issue, location, hardcodedPath, recommendation }` —— 例如 `{ "issue": "硬編 Windows 路徑 + 直接 File.IO，無法跨平台測試", "location": "GenerateReport 第 41 行", "hardcodedPath": "C:\\Reports\\", "recommendation": "建構式注入 IFileSystem 取代直接 File.*，測試即可改用 MockFileSystem" }`。此旗標供 Reviewer 顯著呈現為 opt-in 建議（需使用者同意才修改 production）。
 
 > **Legacy Code 測試策略**：因為靜態依賴不可 Mock，測試**只能測試實際資料路徑**（Characterization Test）。`suggestedTestScenarios` 的命名必須反映靜態資料的實際內容，而非理想化的邊界條件。
 
-> **重要**：Legacy Code 類型不走標準的 Mock 分析流程（因為依賴是靜態的，無法注入）。若類別同時有建構子注入和靜態依賴，仍標記為 `"legacy"`，但建構子注入的部分正常分析。
+> **重要**：Legacy Code 類型不走標準的 Mock 分析流程（因為依賴是靜態的，無法注入）。
 
 #### 若 `targetType === "validator"`：執行 Validator 專用分析
 
@@ -213,7 +215,7 @@ Step 2 只辨識建構子的**依賴**，不產生任何場景。本步驟負責
 
 ### Step 3：分析方法簽章
 
-> **採用模式（`scenarioSource === "adopted"`）：Option A 範圍收斂**。`methodsToTest` **只保留 `adoptedMethods`**——即 `scenarioSpecs[].method` 涵蓋到的方法。其餘公開方法列入 `excludedMethods`，**不對其做本步驟的方法簽章分析**（不掃描例外、guard pattern、集合場景等）。`excludedMethods` 是「本次因場景未涵蓋而排除」的方法清單，不代表這些方法有問題。
+> **採用模式（`scenarioSource === "adopted"`）：Option A 範圍收斂**。`methodsToTest` **只保留 `adoptedMethods`**——即 `scenarioSpecs[].method` 涵蓋到的方法。其餘公開方法列入 `excludedMethods`，**不對其做本步驟的方法簽章分析**（不掃描例外、guard pattern、集合場景等）。
 
 對每個要測試的公開方法，分析：
 
@@ -269,6 +271,7 @@ Step 2 只辨識建構子的**依賴**，不產生任何場景。本步驟負責
    - `usesGetLocalNow`：整個類別是否使用 `GetLocalNow()`
    - `usesGetUtcNow`：整個類別是否使用 `GetUtcNow()`
    - `perMethod`：`{ "methodName": ["GetLocalNow", "GetUtcNow"] }`
+   - **範圍過濾時**：`usesGetLocalNow`／`usesGetUtcNow` 仍以**整個類別**為準（欄位語意就是類別層級），`perMethod` 只列 `methodsToTest` 內的方法
 
 > 此資訊讓 Writer 知道測試中需要同時控制 Local 和 UTC 時間，以及是否需要使用 `SetLocalNow()` 擴充方法。
 
@@ -319,7 +322,9 @@ Step 2 只辨識建構子的**依賴**，不產生任何場景。本步驟負責
 
 > **精簡原則**：條件式欄位（`validatorInfo`、`legacyInfo`、`fileSystemOperations`、`timeProviderUsage`、`complexModelAnalysis`）**只在適用時輸出**，不適用時完全省略（不輸出 `null` 或空物件 `{}`）。例如：無 TimeProvider 依賴時，省略整個 `timeProviderUsage` 欄位。**禁止輸出** `namespace` 和 `filePath` 頂層欄位（Orchestrator 另行傳遞，不需重複）。**禁止輸出** `methodsToTest[].returnType`（Writer Step 3 直接讀原始碼取得）。
 
-> **採用模式新增欄位**（僅當 `scenarioSource === "adopted"` 時輸出；`generated` 模式下這些欄位完全省略，確保現狀不變）：`scenarioSource: "adopted"`、`adoptedMethods: string[]`、`excludedMethods: string[]`、`scenarioSpecs: [{ name, method, priority, category, arrange, act, assert, coverage, rule, note, testData }]`（欄位定義與解析規則見 Step 0.5；`rule`/`note`/`testData` 無值時為 `null`）。`suggestedTestScenarios[]` 此時改由 `scenarioSpecs[].name` 投影而得（每個元素等於對應 `scenarioSpecs[].name`），供舊版 Writer 向下相容；`methodScenarioCounts`/`methodCount`/`scenarioCount` 依 `scenarioSpecs`/`adoptedMethods` 重新計算（不再是全量生成值）。
+> **`excludedMethods: string[]` 一律輸出，不分模式**：被測類別有公開方法因本次範圍（提示詞指定的方法、或採用進來的場景）而未納入時逐一列出，否則輸出 `[]`。這是下游判讀本次涵蓋範圍的依據——它不代表這些方法有問題。
+
+> **採用模式新增欄位**（僅當 `scenarioSource === "adopted"` 時輸出）：`scenarioSource: "adopted"`、`adoptedMethods: string[]`、`scenarioSpecs: [{ name, method, priority, category, arrange, act, assert, coverage, rule, note, testData }]`（欄位定義與解析規則見 Step 0.5；`rule`/`note`/`testData` 無值時為 `null`）。`suggestedTestScenarios[]` 此時改由 `scenarioSpecs[].name` 投影而得（每個元素等於對應 `scenarioSpecs[].name`），供舊版 Writer 向下相容；`methodScenarioCounts`/`methodCount`/`scenarioCount` 依 `scenarioSpecs`/`adoptedMethods` 重新計算（不再是全量生成值）。
 
 ```json
 {
@@ -355,6 +360,7 @@ Step 2 只辨識建構子的**依賴**，不產生任何場景。本步驟負責
       "throwsExceptions": ["ArgumentNullException", "InvalidOperationException"]
     }
   ],
+  "excludedMethods": [],
   "timeProviderUsage": {
     "usesGetLocalNow": true,
     "usesGetUtcNow": true,
@@ -414,10 +420,11 @@ Step 2 只辨識建構子的**依賴**，不產生任何場景。本步驟負責
 > - `InclusiveBetween(min, max)`：提供在範圍內的值
 > - 集合屬性（`isCollection: true`）：提供至少一個元素的合法集合描述（如 `"[at least 1 valid item]"`）
 > - 跨欄位規則（`crossFieldRules[]`）：不列入 `validBaseObjectHint`，由 Writer 自行依 `condition` 設定
+> - **時間型屬性（`DateTime`／`DateTimeOffset`／`DateOnly`）：不列入 `validBaseObjectHint`**，由 Writer 依注入的 `TimeProvider` 推導（寫死日期或真實時鐘會與 Writer 的時間規則相左）
 >
 > **用途**：Writer 以此為基礎建立 `CreateValid{ModelType}()` helper，確保 base object 能通過所有驗證規則。
 
-> **`legacyInfo` 結構**（當 `targetType === "legacy"` 時）：包含 `staticDependencies[]`（每項 `{ className, methodName, filePath }`）、`hardcodedData`（靜態類別中寫死的資料摘要，如 `"3 users: ID 1 Alice $350.50, ID 2 Bob $75, ID 3 Carol $0"`）、`directIoOperations[]`（如 `"File.WriteAllText"`, `"DateTime.Now"` 等）、`testabilityIssues[]`（可測試性問題描述清單）、`productionRefactorSuggestion`（僅在偵測到「直接 File.IO + 硬編絕對路徑 + 無 IFileSystem」時輸出，結構 `{ issue, location, hardcodedPath, recommendation }`）。**此資訊讓 Writer 知道只能用 Characterization Test 模式，命名必須基於靜態資料的實際值；`productionRefactorSuggestion` 供 Reviewer 顯著呈現為 opt-in 建議。**
+> **`legacyInfo` 結構**（當 `targetType === "legacy"` 時）：包含 `staticDependencies[]`（每項 `{ className, methodName, filePath }`）、`hardcodedData`（靜態類別中寫死的資料摘要，如 `"3 users: ID 1 Alice $350.50, ID 2 Bob $75, ID 3 Carol $0"`）、`directIoOperations[]`（如 `"File.WriteAllText"`, `"DateTime.Now"` 等）、`testabilityIssues[]`（可測試性問題描述清單，含「直接 File.IO + 硬編絕對路徑 + 無 IFileSystem」這類 production 面的限制）。**此資訊讓 Writer 知道只能用 Characterization Test 模式，命名必須基於靜態資料的實際值；Reviewer 據此把根因在 production 的缺陷列入 `productionObservations[]`。**
 
 > **`fileSystemOperations` 結構**（當有 `IFileSystem` 依賴時）：`{ fileOps: [...], directoryOps: [...], pathOps: [...] }`。列出被測試類別使用的所有 `IFileSystem.File.*`、`IFileSystem.Directory.*`、`IFileSystem.Path.*` 操作名稱。
 
@@ -431,7 +438,7 @@ Step 2 只辨識建構子的**依賴**，不產生任何場景。本步驟負責
 
 在產出最終 JSON 之前，執行以下數量一致性檢查：
 
-> **採用模式（`scenarioSource === "adopted"`）時，錨點改為 `scenarioSpecs`**：`scenarioSpecs.length` 必須等於 `suggestedTestScenarios.length`（因後者為前者投影），且依 `method` 分組計數必須等於 `methodScenarioCounts`。**命名格式檢查（三段式、每段 ≤6 字）對 `scenarioSpecs` 來源的名稱一律放行**——採用進來的場景名稱原樣保留，不套用長度限制、不壓縮（generated 模式維持原限制不變）。另需檢查：`scenarioSpecs[].method` 必須都屬於 `adoptedMethods`；`adoptedMethods` 與 `excludedMethods` 交集必為空。以下 1～4 項在 generated 模式照常執行；adopted 模式下 1、2 項的「加總」改為對齊 `scenarioSpecs`。
+> **採用模式（`scenarioSource === "adopted"`）時，錨點改為 `scenarioSpecs`**：`scenarioSpecs.length` 必須等於 `suggestedTestScenarios.length`（因後者為前者投影），且依 `method` 分組計數必須等於 `methodScenarioCounts`。**命名格式檢查（三段式）對 `scenarioSpecs` 來源的名稱一律放行**——採用進來的場景名稱原樣保留、不壓縮。另需檢查：`scenarioSpecs[].method` 必須都屬於 `adoptedMethods`；`adoptedMethods` 與 `excludedMethods` 交集必為空。以下 1～4 項在 generated 模式照常執行；adopted 模式下 1、2 項的「加總」改為對齊 `scenarioSpecs`。
 
 1. **場景總數對齊**：計算 `methodScenarioCounts` 所有值的加總，確認等於 `suggestedTestScenarios` 陣列的長度
    - 若不一致：補足遺漏場景，或修正 `methodScenarioCounts` 中的數字，以實際 `suggestedTestScenarios` 為準
@@ -494,7 +501,7 @@ Step 2 只辨識建構子的**依賴**，不產生任何場景。本步驟負責
   "analysisFilePath": "tests/MyProject.Core.Tests/.orchestrator/analysis/OrderProcessingService.analysis.json",
 ```
 
-> **採用模式時精簡摘要額外欄位**：`"scenarioSource": "adopted"`、`"adoptedMethods": [...]`、`"excludedMethods": [...]`，供 Orchestrator 呈現採用摘要（5.1-D）。`generated` 模式不輸出這三個欄位。
+> **精簡摘要一律含 `"excludedMethods": [...]`**（無排除時為 `[]`），供 Orchestrator 呈現範圍摘要。**採用模式額外欄位**：`"scenarioSource": "adopted"`、`"adoptedMethods": [...]`；`generated` 模式不輸出這兩個欄位。
 
 > **`targetType === "validator"` 時的精簡摘要**：
 
@@ -524,7 +531,7 @@ Step 2 只辨識建構子的**依賴**，不產生任何場景。本步驟負責
 
 1. **只分析，不寫程式碼** — 你的產出是交接檔案 + 精簡摘要回傳
 2. **只描述，不指派** — 你的職責是產出客觀事實（依賴、方法、既有基礎設施、場景），由 Writer 決定要用哪些技術。不要在報告中夾帶技術選型指令。
-3. **`suggestedTestScenarios` 必須使用中文三段式命名** — 格式為 `方法_情境_預期`，使用中文描述情境與預期結果。**精簡原則：每段最多 6 個中文字，以最短能傳達語義的詞彙表達。**
+3. **`suggestedTestScenarios` 必須使用中文三段式命名** — 格式為 `方法_情境_預期`，使用中文描述情境與預期結果。
    - **情境與預期段不得嵌入英文屬性名、參數名或欄位名**（如 `ProductName`、`timeProvider`、`Items`、`CustomerId`）。需指涉時一律譯為中文（產品名稱、時間提供者、項目、客戶編號）。
    - **白名單（得保留原文）**：程式碼中的**值與型別** —— 例外型別名（`應拋出ArgumentNullException`）、列舉值（`狀態非Active`、`狀態非OnLoan`）、語言字面值（`為null`、`應為True`、`應回傳false`）、型別成員值（`應回傳TimeSpanZero`）。中文化會失去與程式碼的對應，故不視為違反。
    - **分界原則**：程式碼中的**值與型別**保留原文，**識別字**（參數名、屬性名、欄位名）必須譯為中文。
@@ -532,7 +539,6 @@ Step 2 只辨識建構子的**依賴**，不產生任何場景。本步驟負責
    - 情境詞彙：`有效`、`無效`、`為null`、`空`、`超限`
    - 預期詞彙：`應回傳`、`應拋出`、`應為`、`應不呼叫`
    - 範例：`ProcessOrder_訂單有效_應回傳成功`、`ProcessOrder_訂單為null_應拋出例外`
-   - **例外**：`scenarioSource === "adopted"` 時，`≤6 字` 限制不適用——採用進來的場景名稱（`scenarioSpecs[].name`）原樣保留，不壓縮使用者設計的描述性長命名。此限制僅約束 Analyzer **自行生成**的場景。
 4. **介面檔案路徑要正確** — 使用 `Grep` 確認實際路徑
 5. **沿用既有 pattern** — 如果測試專案已有 AutoFixture 自訂 Attribute 或基礎設施，必須在 `existingTestInfrastructure` 中如實記錄，Writer 才有依據沿用而不重新發明
 6. **目標類型決定分析流程** — `targetType === "validator"` 時走 Step 1.5 的 Validator 專用分析流程，跳過 Step 3（方法簽章分析）；`targetType === "legacy"` 時走 Step 1.5 的 Legacy Code 專用分析流程，`suggestedTestScenarios` 命名必須基於靜態資料的實際值（Characterization Test）

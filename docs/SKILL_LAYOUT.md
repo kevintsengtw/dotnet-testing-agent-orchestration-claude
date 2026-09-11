@@ -9,14 +9,14 @@
 | 類型 | canonical location | 說明 |
 | --- | --- | --- |
 | **共用技術 Skill**（shared） | `.agents/skills/<skill-name>/SKILL.md` | .NET 測試技術知識庫。跨 Agent 生態共用，不綁定任何特定 AI Coding Agent |
-| **Claude 專屬 orchestration Skill** | `.claude/skills/<skill-name>/SKILL.md` | 指揮中心，使用 Claude Code 的 subagent、hooks、Agent tool 語意 |
+| **Claude 專屬 orchestration Skill** | `.claude/skills/<skill-name>/SKILL.md` | 指揮中心，使用 Claude Code 的 subagent、Agent tool 語意 |
 | **Claude 專屬工具型 Skill** | `.claude/skills/<skill-name>/SKILL.md` | frontmatter 使用 `allowed-tools` 等 Claude Code 語意 |
 
 > 目錄名稱是 **`.agents`（複數）**，不是 `.agent`。
 
 ### 分類清單（單一事實來源）
 
-實際清單由 [`.claude/scripts/skills/skill-registry.js`](../.claude/scripts/skills/skill-registry.js) 定義，文件僅為摘要：
+實際清單由 [`.claude/scripts/dotnet-testing-claude-full/skill-registry.js`](../.claude/scripts/dotnet-testing-claude-full/skill-registry.js) 定義，文件僅為摘要：
 
 - **共用技術 Skill（bundled，29 個）**：29 個 `dotnet-testing-*` 技術 Skill（不含 orchestrator），隨本 repo 散佈
 - **外部來源共用 Skill（1 個）**：`unit-test-scenarios` —— 分類同屬 shared、canonical 亦在 `.agents/skills`，但**不隨本 repo 散佈**，由專屬公開 repo [kevintsengtw/unit-test-scenarios](https://github.com/kevintsengtw/unit-test-scenarios) 提供、使用者自行安裝。它是 orchestrator 流程**外部**的輔助工具（產出 Test Scenarios 文件供採用機制吃），不被任何 subagent 以 Skill 形式載入。`skills-doctor` 不要求它實體存在（缺席為 info，非 error）
@@ -43,8 +43,8 @@ Agent 定義中的 Skill 表格直接列出 `.agents/skills/<name>/SKILL.md` 路
 ### 驗證
 
 ```bash
-node .claude/scripts/skills/skills-doctor.js          # 完整檢查，有錯誤時離開碼 1
-node .claude/scripts/skills/skills-doctor.js --json    # 機器可讀輸出
+node .claude/scripts/dotnet-testing-claude-full/skills-doctor.js          # 完整檢查，有錯誤時離開碼 1
+node .claude/scripts/dotnet-testing-claude-full/skills-doctor.js --json    # 機器可讀輸出
 ```
 
 檢查項目與錯誤代碼：

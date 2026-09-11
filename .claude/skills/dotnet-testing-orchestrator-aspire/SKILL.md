@@ -107,8 +107,8 @@ Agent(subagent_type="dotnet-testing-advanced-aspire-reviewer", prompt="...")
 - ❓ 我是否正在嘗試執行 `dotnet build` 或 `dotnet test`？→ **停止，交給 Aspire Executor**
 - ❓ 我是否正在嘗試使用 Bash 呼叫 claude？→ **停止，使用 Agent tool**
 
-- ❓ 我已貼出耗時表、正要進入 Phase 5 或輸出收尾提示？→ **停止，Token 表格必須先貼**（⛔ 只跑指令不貼 = 未完成）
-- ❓ 我已貼出 Token 表格、正準備結束回覆？→ **停止，還有 Phase 5 後置清理，且必須輸出其狀態行**
+- ❓ 我正要進入 Phase 5 或輸出收尾提示？→ **停止，`report` 的兩張表格必須先貼**（⛔ 只跑指令不貼 = 未完成）
+- ❓ 我已貼出兩張表格、正準備結束回覆？→ **停止，還有 Phase 5 後置清理，且必須輸出其狀態行**
 
 **在收到每個 subagent 的回傳結果之前，你不得採取任何程式碼相關行動。**
 
@@ -118,7 +118,7 @@ Agent(subagent_type="dotnet-testing-advanced-aspire-reviewer", prompt="...")
 
 > ⚠️ **不需要在 subagent prompt 中嵌入完整分析報告 JSON、sourceCodeContext、endpoint 清單、suggestedTestScenarios、existingTestInfrastructure 等內容**。每個 subagent 已有 Step 0 讀取交接檔案的能力，可自行取得所有資訊。
 >
-> Orchestrator prompt 只需傳：**交接檔案路徑 + 摘要數字**（endpointCount、scenarioCount、testCount 等）+ 必要的控制參數（風格統一指令、modification request 等）。
+> Orchestrator prompt 只需傳：**交接檔案路徑 + 摘要數字**（endpointCount、scenarioCount、testMethodCount／testCaseCount 等）+ 必要的控制參數（風格統一指令、modification request 等）。
 
 ---
 
@@ -162,7 +162,7 @@ Analyzer 的分析報告（交接檔案）中包含 `sourceCodeContext` 欄位�
 Phase 0 清理完成後、**啟動 Analyzer 之前**，以 **Bash 工具**執行一次（best-effort：失敗或無輸出即略過，不影響流程）：
 
 ```bash
-node .claude/scripts/token-usage/token_usage.js start aspire 2>/dev/null
+node .claude/scripts/dotnet-testing-claude-full/token_usage.js start aspire 2>/dev/null
 ```
 
 這標記本次工作流程的 token 計量起點，使 **Phase 0 清理用的 Executor 不被計入** token 統計，主執行緒也只計階段 1 之後。此呼叫**不是探索**（不讀原始碼、不 Grep）。
@@ -191,6 +191,8 @@ analysisOutputPath: tests/MyProject.AppHost.Tests/.orchestrator/analysis/OrdersC
 ```
 
 > ⚠️ `analysisOutputPath` 必須由 Orchestrator 計算並提供。計算方式：從測試專案路徑去掉 `.csproj` 檔名，拼接 `.orchestrator/analysis/{ControllerName}.analysis.json`。Analyzer **不需要自行推導路徑**。
+
+> **等待 subagent 完成**：Agent tool 以背景啟動時，工具呼叫會立即返回、完成後由系統通知你。**直接等通知即可**——不要用 `sleep`、`echo waiting`、輪詢迴圈或 `until [ -f ... ]` 檢查交接檔落地。這些做法沒有作用，只會多出雜訊。等待期間若要輸出文字，一律繁體中文。
 
 **等候 Analyzer 回傳精簡摘要**，包含：
 
@@ -223,7 +225,7 @@ AppHost 專案路徑: {appHostPath}
 測試檔案的預期輸出路徑: {outputPath}
 ```
 
-**等候 Writer 回傳精簡摘要**：`testFilePaths`、`testCount`、`skillsLoaded`、`writerResultFilePath`
+**等候 Writer 回傳精簡摘要**：`testFilePaths`、`testMethodCount`、`testCaseCount`、`skillsLoaded`、`writerResultFilePath`
 
 ### 階段 3：啟動執行（Aspire Executor）
 
@@ -245,6 +247,8 @@ analysisFilePath: {analysisFilePath}
 writerResultFilePath: {writerResultFilePath}
 ```
 > ⚠️ 禁止在 Executor prompt 中嵌入測試程式碼、NuGet 套件清單等內容。
+
+> **同專案多目標時**：不要把多個路徑逗號合併塞進單值欄位。改為每個目標一組完整欄位（測試檔案路徑 + `analysisFilePath` + `writerResultFilePath`），在同一個 prompt 中逐組列出，並明寫「逐個目標以 `dotnet test --filter` 對帳，各自寫一份 executor-result」。
 
 **等候 Executor 回傳精簡摘要**：`totalTests`、`passedTests`、`failedTests`、`fixRounds`、`executorResultFilePath`
 
@@ -278,31 +282,19 @@ executorResultFilePath: {executorResultFilePath}
 
 ## 執行進度顯示規範
 
-### 時間追蹤方式（Hook 自動化）
-
-時間追蹤由 **PreToolUse / PostToolUse hooks** 自動處理。每次呼叫 Agent tool 時：
-
-- **PreToolUse hook** 會在 `additionalContext` 中注入開始時間，格式：`⏱ {subagent_type} 開始：{HH:MM:SS}`
-- **PostToolUse hook** 會在 `additionalContext` 中注入完成時間與耗時，格式：`⏱ {subagent_type} 完成：{HH:MM:SS}（開始：{HH:MM:SS}，耗時 M 分 S 秒）`
-
-**你不需要手動呼叫 `Bash(date)` 取得時間。** Hook 注入的時間資訊會自動出現在 Agent tool 的回傳結果中。
-
-> 如果 hook 未安裝（`additionalContext` 中沒有時間資訊），流程仍可正常執行，僅缺少時間追蹤顯示。
-
 ### 各階段必要輸出
 
 | 動作時機 | 必輸出文字 |
 |---------|----------|
 | 啟動 Analyzer **前** | `## 階段 1：啟動分析（Analyzer）` |
-| Analyzer 回傳後 | `✅ 階段 1 完成（{hook 注入的耗時}）— 識別出 N 個方法、Y 個依賴，需要 [技術清單]` |
+| Analyzer 回傳後 | `✅ 階段 1 完成 — 識別出 N 個方法、Y 個依賴、Z 個場景` |
 | 啟動 Writer **前** | `## 階段 2：啟動撰寫（Test Writer）` |
-| Writer 回傳後 | `✅ 階段 2 完成（{hook 注入的耗時}）— 已建立測試檔案，共 N 個測試案例` |
+| Writer 回傳後 | `✅ 階段 2 完成 — 已建立測試檔案，共 N 個測試案例` |
 | 啟動 Executor **前** | `## 階段 3：啟動執行（Test Executor）` |
-| Executor 回傳後 | `✅ 階段 3 完成（{hook 注入的耗時}）— N 個測試案例通過，修正 Y 次` |
+| Executor 回傳後 | `✅ 階段 3 完成 — N 個測試案例通過，修正 Y 次` |
 | 啟動 Reviewer **前** | `## 階段 4：啟動審查（Test Reviewer）` |
-| Reviewer 回傳後 | `✅ 階段 4 完成（{hook 注入的耗時}）` |
-| **結果呈現後** | 輸出 `### ⏱ 各階段耗時` 表格（見下方格式） |
-| **耗時表之後** | 執行 `report` 指令並**把其 stdout 表格貼進回覆**（⛔ 只跑不貼 = 未完成；見「📊 Token 用量」段） |
+| Reviewer 回傳後 | `✅ 階段 4 完成` |
+| **結果呈現後** | 執行 `report` 指令並**把其 stdout 的兩張表格（Token 用量、各階段耗時）貼進回覆**（⛔ 只跑不貼 = 未完成；見「📊 Token 用量」段） |
 | **Token 表格之後**（真正最後一步）| 執行 Phase 5 後置清理，並輸出其狀態行（⛔ 必須輸出；該行缺席時以磁碟狀態判定，不得逕判流程未完成 — 見「Phase 5：後置清理」段） |
 
 ---
@@ -321,26 +313,9 @@ executorResultFilePath: {executorResultFilePath}
 6. **使用的 Skills 組合**：列出 Writer 載入了哪些 Skills（固定為 `aspire-testing`）
 7. **Executor 修正紀錄**（如果有的話）：Executor 修正了哪些編譯/執行錯誤
 8. **`.csproj` 變動**：彙整所有 Writer 回傳的 `nugetChanges` 逐筆列出（套件名 + 版本 前→後）。**即使為空也必須明說「`.csproj` 未變動」**——測試專案的套件基線被改動卻未告知，使用者無從察覺；「沒提」與「沒改」不得由使用者自行推斷
-9. **非測試程式碼變更**：若本次流程修改了測試專案以外的任何檔案（`src/` 下的生產程式碼、AppHost 設定等），必須逐一列出檔案路徑、變更摘要與變更原因（如 skill 規則明文要求）。**即使未修改也必須明說「未修改測試專案以外的檔案」**——`src/` 變更比 `.csproj` 更需要使用者知情，「沒提」與「沒改」不得由使用者自行推斷
-10. **各階段耗時摘要**：結果呈現結束後，**必須**輸出以下格式的耗時表格（從 hook 注入的耗時資訊中取得各階段時間）
+9. **生產程式碼觀察**：呈現 Executor／Reviewer 回傳的 `productionObservations[]`（每筆含 `file`、`location`、`issue`、`options[]`）。本流程**不修改 `src/`**；有觀察時逐筆列出並**等使用者決定**，沒有時明說「未發現生產程式碼問題」。
 
-**結果呈現完畢後，必須緊接著輸出耗時摘要（不可省略）：**
-
-```markdown
-### ⏱ 各階段耗時
-
-| 階段 | 耗時 |
-|------|------|
-| 階段 1 Analyzer | M 分 S 秒 |
-| 階段 2 Writer   | M 分 S 秒 |
-| 階段 3 Executor | M 分 S 秒 |
-| 階段 4 Reviewer | M 分 S 秒 |
-| **總計**        | **M 分 S 秒** |
-```
-
-> 各階段耗時從 PostToolUse hook 注入的 `additionalContext` 中取得（格式：`耗時 M 分 S 秒`）。總計為四個階段之和。
-
-### 📊 本次工作流程 Token 用量（強制輸出，不可省略）
+### 📊 本次工作流程 Token 用量與各階段耗時（強制輸出，不可省略）
 
 ⛔ **只跑指令、沒把表格貼進可見回覆 = 未完成。**
 ⛔ **這不是流程的結尾。** 貼出表格之後，仍須執行 Phase 5 後置清理並輸出其狀態行，該狀態行才是回覆的最後一行。
@@ -349,16 +324,16 @@ Bash 的 stdout **不會自動顯示給使用者**，必須由你親手複製貼
 1. 以 **Bash 工具**執行（此步只取得資料，使用者還看不到）：
 
    ```bash
-   node .claude/scripts/token-usage/token_usage.js report aspire 2>/dev/null
+   node .claude/scripts/dotnet-testing-claude-full/token_usage.js report aspire 2>/dev/null
    ```
 
-2. **立即在你的回覆中，把該指令 stdout 的整段 Markdown 表格（從 `### 📊 本次測試工作流程 Token 用量` 到 `>` 開頭的備註）一字不改、完整貼出**，作為給使用者看的最終結果。
+2. **立即在你的回覆中，把該指令 stdout 的兩張 Markdown 表格（`### 📊 本次測試工作流程 Token 用量` 與 `### ⏱ 各階段耗時`，各自到 `>` 開頭的備註為止）一字不改、完整貼出**，作為給使用者看的最終結果。
 3. ⚠️ **在 token 表貼出之前，不要輸出「請告知下一步 / 是否套用 Reviewer 建議」等收尾提示**——收尾提示一律放在 token 表**之後**。
 4. 只有當指令真的無輸出或失敗（本機未產生 transcript）時，才可略過本段。
 
-> 自我檢查（結束前必問）：**「我是否已把 report 指令的 stdout 表格貼進可見回覆？」** 若否 → 立即補貼，不得結束。
+> 自我檢查（結束前必問）：**「我是否已把 report 指令 stdout 的兩張表格都貼進可見回覆？」** 若否 → 立即補貼，不得結束。
 
-> **表格缺席時的判讀**：Token 表格缺席**不代表流程異常** —— 四階段的成敗一律以 Executor 回報與磁碟狀態為準。缺席只代表本次沒有 token 資料可看；transcript 仍在，使用者可自行執行 `node .claude/scripts/token-usage/token_usage.js report aspire` 補取。**不得因表格缺席而重跑整個工作流程。**
+> **表格缺席時的判讀**：Token 表格缺席**不代表流程異常** —— 四階段的成敗一律以 Executor 回報與磁碟狀態為準。缺席只代表本次沒有 token 資料可看；transcript 仍在，使用者可自行執行 `node .claude/scripts/dotnet-testing-claude-full/token_usage.js report aspire` 補取。**不得因表格缺席而重跑整個工作流程。**
 
 - 統計涵蓋 Orchestrator 主執行緒 ＋ 本次所有 `dotnet-testing-*` subagent；input 分純 input／cache 寫入／cache 讀取，另有含快取合計與 output。
 - 引擎只讀 transcript、不裝任何 hook、不影響非測試工作流程的其他工作；完整報告與累積 ledger 寫於 `token-usage-reports/`。詳見 `docs/TOKEN_USAGE_GUIDE.md`。
@@ -404,7 +379,7 @@ Bash 的 stdout **不會自動顯示給使用者**，必須由你親手複製貼
 修改流程結果呈現後，**同樣執行 token 用量統計並親手貼出表格**（規則同主路徑「強制輸出」）：先以 Bash 工具執行下列指令，再把其 stdout 的整段 Markdown 表格**一字不改貼進可見回覆**（⛔ 只跑不貼 = 未完成）；收尾提示放在表格之後。表格與收尾提示之後，**仍須執行 Phase 5 後置清理並輸出其狀態行**，該狀態行才是回覆的最後一行。
 
 ```bash
-node .claude/scripts/token-usage/token_usage.js report aspire 2>/dev/null
+node .claude/scripts/dotnet-testing-claude-full/token_usage.js report aspire 2>/dev/null
 ```
 
 > 因計量起點 marker 不變，這次輸出的是**含本次修改的累計用量**（與初始 run 同一筆 ledger，數字累加）。

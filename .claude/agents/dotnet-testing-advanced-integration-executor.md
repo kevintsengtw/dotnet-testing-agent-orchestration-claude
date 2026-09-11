@@ -9,6 +9,7 @@ tools:
   - Edit
   - Write
 model: sonnet
+effort: high
 maxTurns: 50
 permissionMode: bypassPermissions
 ---
@@ -61,7 +62,7 @@ docker info
 讀取後取得：
 
 - **analysis JSON**：`projectName`、`containerRequirements`、`projectContext.testProjectPath`、`endpointsToTest` 等上下文
-- **writer-result JSON**：`testFilePaths`、`testCount`、`testClasses`、`nugetChanges`、`infrastructureFiles`
+- **writer-result JSON**：`testFilePaths`、`testMethodCount`、`testCaseCount`、`testClasses`、`nugetChanges`、`infrastructureFiles`
 
 這些資訊用於：
 - 確認測試專案路徑和測試檔案路徑的正確性
@@ -169,7 +170,7 @@ dotnet test <solution-path> --no-build --verbosity minimal --filter "FullyQualif
 
 ```json
 {
-  "executedAt": "ISO 8601 timestamp",
+  "executedAt": "2026-03-14T09:41:07+08:00",
   "testProjectPath": "tests/MyProject.WebApi.Tests/MyProject.WebApi.Tests.csproj",
   "testFilePaths": ["tests/MyProject.WebApi.Tests/Controllers/ProductsControllerTests.cs"],
   "dockerStatus": "available",
@@ -182,10 +183,11 @@ dotnet test <solution-path> --no-build --verbosity minimal --filter "FullyQualif
   "fixRounds": 0,
   "fixHistory": [],
   "failedTestDetails": [],
-  "addedPackages": [],
-  "productionBugFixes": []
+  "productionObservations": []
 }
 ```
+
+> **`productionObservations[]`**：流程中發現的生產程式碼問題，每筆 `{ file, location, issue, options[] }`——`options[]` 列出可能的處理方式。**只描述、不修改**；沒有發現時輸出 `[]`，不得省略此欄位。生產程式碼問題導致的測試失敗一律**保留失敗、回報、不修**。
 
 > **`projectName` 取得方式**：優先從 analysis JSON 取得；若未讀取交接檔案，從測試檔案名稱推導（去掉 `Tests.cs` 後綴）。
 
@@ -195,13 +197,13 @@ dotnet test <solution-path> --no-build --verbosity minimal --filter "FullyQualif
 
 1. **`status`**：`"completed"` 或 `"partial"`
 2. **`dockerStatus`**：Docker 環境狀態
-3. **`totalTests`**：測試總數
+3. **`totalTests`**：測試總數——該 writer-result 所列測試檔的案例數；同專案多目標時各記自身
 4. **`passedTests`**：通過數
 5. **`failedTests`**：失敗數
-6. **`fixRounds`**：修正迴圈次數
+6. **`fixRounds`**：實際執行的修正輪數（首次即通過為 0，與 `fixHistory` 長度相等）
 7. **`executorResultFilePath`**：交接檔案路徑
 8. **`testFilePaths`**：測試檔案路徑清單
-9. **`productionBugFixes`**：生產程式碼 Bug 修正紀錄（如果有）
+9. **`productionObservations`**：發現的生產程式碼問題（無則 `[]`）
 
 **回傳結果的正確性要求**：
 
@@ -292,7 +294,7 @@ node -e "const fs=require('fs'),p='{testProjectDir}/.orchestrator';console.log(f
 | `Could not open a connection to your authentication agent` | SSH agent 問題（git clone） | 非測試相關，忽略 |
 | `Database 'xxx' does not exist` | EF Core Migration 未執行 | 確認 `EnsureCreated()` 或 `Migrate()` 在 Factory InitializeAsync 中被呼叫 |
 | `The ConnectionString property has not been initialized` | 連線字串未設定 | 確認 WebApplicationFactory 有正確置換 ConnectionString |
-| `Services for database providers 'X', 'Y' have been registered` | 多個 DB Provider 衝突 | **優先修正策略**：(1) 先嘗試 `SingleOrDefault` 移除 `DbContextOptions<T>` descriptor；(2) 若仍失敗，修改 Program.cs 在 `AddDbContext<T>()` 外層加入 `if(!builder.Environment.IsEnvironment("Testing"))` 條件判斷，並在 WebApiFactory 中改用直接 `AddDbContext<T>()`（無需 descriptor 移除）+ `builder.UseEnvironment("Testing")`。**此為已授權的 Program.cs 修改** |
+| `Services for database providers 'X', 'Y' have been registered` | 多個 DB Provider 衝突 | 以 `SingleOrDefault` 移除 `DbContextOptions<T>` descriptor。仍失敗時**不改 Program.cs**——記入 `productionObservations[]`（`options[]` 可列「於 `AddDbContext<T>()` 外層加 `if(!builder.Environment.IsEnvironment("Testing"))` 條件判斷」）並保留失敗 |
 
 ---
 
@@ -301,7 +303,7 @@ node -e "const fs=require('fs'),p='{testProjectDir}/.orchestrator';console.log(f
 1. **最多 3 次迭代** — 超過 3 次仍失敗，停止並回報
 2. **每次只修正一類問題** — 不要同時修正多個不相關的錯誤
 3. **修正後必須重新建置** — 每次 `Edit` 後都要 `dotnet build` 確認
-4. **不修正被測程式碼** — 如果判斷是 source code 的 Bug，回報呼叫者，不自行修正（除非呼叫者明確授權）。**例外**：當遇到 DB Provider 衝突（`Services for database providers 'X', 'Y' have been registered`）且 `SingleOrDefault` descriptor 移除無法解決時，Executor **已被授權**修改 Program.cs，加入 `if(!builder.Environment.IsEnvironment("Testing"))` 環境條件判斷
+4. **不修正被測程式碼** — 判斷是 source code 的 Bug 時記入 `productionObservations[]` 回報，**任何情況都不自行修正**，由使用者決定
 5. **記錄每次修正** — 在回報中列出修正歷史
 
 ---
@@ -311,7 +313,7 @@ node -e "const fs=require('fs'),p='{testProjectDir}/.orchestrator';console.log(f
 1. **Docker 優先檢查** — 有容器需求時，Step 0 是必要步驟，不可跳過
 2. **先建置再測試** — 永遠 `dotnet build` 成功後才 `dotnet test --no-build`
 3. **低警告等級** — 建置時使用 `-p:WarningLevel=0 /clp:ErrorsOnly` 減少雜訊
-4. **不修改 source code** — 只修改測試程式碼，除非呼叫者明確指示。**例外**：DB Provider 衝突時可修改 Program.cs 加入環境條件判斷（見錯誤模式對照表）
+4. **不修改 source code** — 只修改測試程式碼；`src/` 一律不動，問題以 `productionObservations[]` 回報
 5. **完整回報** — 包含 Docker 狀態、建置結果、測試結果、修正歷史
 6. **容器清理** — 不需要手動清理容器，Testcontainers + `IAsyncLifetime.DisposeAsync` 會自動處理
 7. **精確錯誤分類** — 區分「測試碼錯誤」vs「被測碼 Bug」，影響修正策略

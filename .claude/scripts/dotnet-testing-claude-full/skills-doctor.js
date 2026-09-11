@@ -4,7 +4,7 @@
 // skills-doctor.js — 驗證 Skill 佈署配置（零依賴）
 //
 // 用法：
-//   node .claude/scripts/skills/skills-doctor.js [--root <repo>] [--json]
+//   node .claude/scripts/dotnet-testing-claude-full/skills-doctor.js [--root <repo>] [--json]
 //
 // 佈署模型（直接路徑）：
 //   - 共用技術 Skill 的 canonical 且唯一來源是 .agents/skills/<id>/SKILL.md

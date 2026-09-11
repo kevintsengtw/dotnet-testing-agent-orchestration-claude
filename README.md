@@ -15,8 +15,7 @@
       - [步驟 1：Clone 儲存庫](#步驟-1clone-儲存庫)
       - [步驟 2：複製部署目標](#步驟-2複製部署目標)
       - [步驟 3：確認完整目錄結構](#步驟-3確認完整目錄結構)
-      - [步驟 4：安裝計時 Hook（可選）](#步驟-4安裝計時-hook可選)
-      - [步驟 5：驗證安裝](#步驟-5驗證安裝)
+      - [步驟 4：驗證安裝](#步驟-4驗證安裝)
   - [快速開始](#快速開始)
   - [四種測試工作流程](#四種測試工作流程)
   - [執行結果會呈現什麼](#執行結果會呈現什麼)
@@ -54,7 +53,7 @@ Writer + Executor。
 | ------------------- | ----------------- | --------------------- |
 | Claude Code CLI     | 最新版            | 必要                  |
 | .NET SDK            | 8.0 / 9.0 / 10.0 | 三個版本的練習專案     |
-| Node.js             | 最新版            | 必要：skills-doctor、install-hooks.js、token-usage 引擎皆需要 |
+| Node.js             | 最新版            | 必要：skills-doctor 與 token-usage 引擎皆需要 |
 
 **整合測試 / Aspire 測試額外需要：**
 
@@ -80,7 +79,7 @@ dotnet workload install aspire
 
 執行後會自動部署：
 
-- `.claude/`：`agents/`（16 個 subagent 定義）、`hooks/`（計時 hook）、`skills/`（5 個 Claude 專屬 skills：`dotnet-test` + 4 個 orchestrator）、`scripts/`（skill registry、skills-doctor、token-usage 引擎）
+- `.claude/`：`agents/`（16 個 subagent 定義）、`skills/`（5 個 Claude 專屬 skills：`dotnet-test` + 4 個 orchestrator）、`scripts/`（skill registry、skills-doctor、token-usage 引擎）
 - `.agents/skills/`：29 個共用技術 Skills
 
 ---
@@ -96,12 +95,11 @@ cd dotnet-testing-agent-orchestration-claude
 
 #### 步驟 2：複製部署目標
 
-必須逐項複製以下五個目標，一個都不能少：
+必須逐項複製以下四個目標，一個都不能少：
 
 | 目標 | 內容 | 來源 |
 | --- | --- | --- |
 | `.claude/agents/` | 16 個 subagent 定義 | 本 repo |
-| `.claude/hooks/` | 計時 hook + `install-hooks.js` | 本 repo |
 | `.claude/skills/` | 5 個：`dotnet-test` + 4 個 orchestrator | 本 repo |
 | `.claude/scripts/` | skill registry、skills-doctor、token-usage 引擎（**最容易漏，漏了會讓 token 用量功能與 doctor 失效**） | 本 repo |
 | `.agents/skills/` | 29 個共用技術 Skills（canonical location：`.agents/skills/<skill-name>/SKILL.md`） | [kevintsengtw/dotnet-testing-agent-skills](https://github.com/kevintsengtw/dotnet-testing-agent-skills) |
@@ -109,7 +107,6 @@ cd dotnet-testing-agent-orchestration-claude
 ```bash
 mkdir -p /your-project/.claude
 cp -r .claude/agents/.  /your-project/.claude/agents/
-cp -r .claude/hooks/.   /your-project/.claude/hooks/
 cp -r .claude/skills/.  /your-project/.claude/skills/
 cp -r .claude/scripts/. /your-project/.claude/scripts/
 
@@ -183,10 +180,6 @@ dotnet-testing-xunit-project-setup/
 │   ├── dotnet-testing-advanced-tunit-writer.md
 │   ├── dotnet-testing-advanced-tunit-executor.md
 │   └── dotnet-testing-advanced-tunit-reviewer.md
-├── hooks/                                                   ← 本 repo 內建
-│   ├── dotnet-testing-agent-timer-pre.sh
-│   ├── dotnet-testing-agent-timer-post.sh
-│   └── install-hooks.js
 ├── skills/                                                ← Claude 專屬 Skill（5 個）
 │   ├── dotnet-test/
 │   ├── dotnet-testing-orchestrator-unit/
@@ -230,24 +223,14 @@ dotnet-testing-xunit-project-setup/
     └── dotnet-testing-xunit-project-setup/
 ```
 
-> 安裝步驟 4（計時 Hook）完成後，會新增 `.claude/settings.json`。
-
-#### 步驟 4：安裝計時 Hook（可選）
+#### 步驟 4：驗證安裝
 
 ```bash
-node .claude/hooks/install-hooks.js
-```
-
-Hook 會自動記錄每個 Subagent 的執行耗時，執行後設定寫入 `.claude/settings.json`。未安裝時 Orchestrator 仍可正常運作，只是不會顯示耗時資訊。
-
-#### 步驟 5：驗證安裝
-
-```bash
-node .claude/scripts/skills/skills-doctor.js
+node .claude/scripts/dotnet-testing-claude-full/skills-doctor.js
 ls -d .agents/skills/*/ | wc -l    # 應為 29
 ```
 
-離開碼 0 代表五個部署目標齊備。數量不是 29 代表步驟 2 多複製了 `dotnet-testing-*` 以外的目錄（doctor 只檢查該有的 29 個是否到位，不會因多餘目錄回報錯誤）。接著在 Claude Code 中輸入以下任一指令，確認斜線指令可用：
+離開碼 0 代表四個部署目標齊備。數量不是 29 代表步驟 2 多複製了 `dotnet-testing-*` 以外的目錄（doctor 只檢查該有的 29 個是否到位，不會因多餘目錄回報錯誤）。接著在 Claude Code 中輸入以下任一指令，確認斜線指令可用：
 
 ```text
 /dotnet-testing-orchestrator-unit
@@ -327,16 +310,18 @@ ls -d .agents/skills/*/ | wc -l    # 應為 29
 | **Writer 的技術選擇** | 實際讀取了哪些 Skill、偏離了哪些預設做法與理由（見下） |
 | Executor 修正紀錄 | 修正了哪些編譯／執行錯誤 |
 | **`.csproj` 變動** | 逐筆列出套件與版本前後；**未變動時明說「未變動」** |
-| **非測試程式碼變更** | 測試專案以外的檔案若被修改，逐筆列出路徑、摘要與原因；**未修改時明說** |
+| **生產程式碼觀察** | 流程一律不修改 `src/`；發現的問題逐筆列出檔案、位置、問題與可能的處理方式，交使用者決定；**未發現時明說** |
 | 各階段耗時 | 四階段耗時表 |
 | Token 用量 | Orchestrator 與各 Subagent 的分項統計 |
 | 後置清理狀態 | 暫存交接目錄的清理結果 |
 
 ### 為什麼把這兩項列為契約
 
-`.csproj` 與測試專案以外的檔案，是**工作流程可能改到、但使用者不會主動去看**的地方。
+`.csproj` 是**工作流程可能改到、但使用者不會主動去看**的地方。
 
 實測中曾出現：某次執行升級了 6 個 NuGet 套件（含 3 個主版號跳躍），版本判斷完全正確、交接檔案也有完整記錄，但結果整合隻字未提。使用者無從得知測試專案的套件基線已被改動。
+
+`src/` 走的是另一條路——四套工作流程**一律不修改生產程式碼**。早期版本中，整合測試與 Aspire 測試的 Executor 帶有「生產程式碼 Bug 修正授權」，實測兩次分別改動了 DTO nullability 與 AppHost，兩次使用者事前都沒被問到。現在發現的問題只描述、不動手：記入 `productionObservations[]`（檔案、位置、問題、可能的處理方式），生產程式碼問題造成的測試失敗也保留失敗，不以調整測試迴避。要不要改、怎麼改由使用者決定。
 
 契約化之後，**「沒提」與「沒改」不再需要由使用者自行推斷**。
 
@@ -362,7 +347,7 @@ Analyzer 在推導測試情境時，會把被測類別**在原始碼中明確宣
 
 | 呈現項目 | 內容 |
 | --- | --- |
-| `skillsConsulted` | Writer 實際讀取了哪些 Skill |
+| `skillsLoaded` | Writer 實際讀取了哪些 Skill |
 | `deviations` | 偏離預設做法的項目與理由；**為空時亦須明說「未偏離」** |
 
 ---

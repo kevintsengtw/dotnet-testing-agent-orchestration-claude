@@ -9,6 +9,7 @@ tools:
   - Edit
   - Write
 model: sonnet
+effort: high
 maxTurns: 50
 permissionMode: bypassPermissions
 ---
@@ -102,7 +103,7 @@ dotnet build <solution-path> -p:WarningLevel=0 /clp:ErrorsOnly --verbosity minim
 3. 分類錯誤（見「錯誤模式對照表」）
 4. 使用 `Edit` 工具修正原始碼
 5. 重新建置
-6. 最多重試 **3 次**，仍失敗則回報呼叫者
+6. 最多重試 **5 次**，仍失敗則回報呼叫者（與「修正迴圈規則」第 1 條一致）
 
 ### Step 1.5：讀取交接檔案（必要）
 
@@ -111,7 +112,7 @@ dotnet build <solution-path> -p:WarningLevel=0 /clp:ErrorsOnly --verbosity minim
 讀取後取得：
 
 - **analysis JSON**：`controllerName`、`projectContext.testProjectPath`、`appHostInfo`、`resources` 等上下文
-- **writer-result JSON**：`testFilePaths`、`testCount`、`testClasses`、`nugetChanges`
+- **writer-result JSON**：`testFilePaths`、`testMethodCount`、`testCaseCount`、`testClasses`、`nugetChanges`
 
 這些資訊用於：
 - 確認測試專案路徑和測試檔案路徑的正確性
@@ -162,7 +163,7 @@ dotnet test <solution-path> --no-build --verbosity minimal --blame-hang-timeout 
 4. 如果是測試程式碼問題：使用 `Edit` 修正測試
 5. 如果是環境問題（Docker、容器啟動）：回報呼叫者，由呼叫者告知使用者
 6. 重新建置並執行
-7. 最多重試 **3 次**
+7. 最多重試 **5 次**（與「修正迴圈規則」第 1 條一致）
 
 ### Step 4：回報結果
 
@@ -193,10 +194,10 @@ dotnet test <solution-path> --no-build --verbosity minimal --blame-hang-timeout 
 | Resource readiness timeout | 容器啟動超時 | 增加等待時間、設定 `ContainerLifetime.Session` |
 | `CreateHttpClient` 找不到服務 | 服務名稱不符或缺少 `launchSettings.json` | 確認名稱一致性，必要時建立 `launchSettings.json` |
 | `Cannot open database` | DB schema 未建立 | 在 AspireAppFixture 加入 `EnsureCreatedAsync()` |
-| `GET /health` 回傳 404 | WebAPI 未註冊 Health Checks | 加入 `AddHealthChecks()` + `MapHealthChecks("/health")` |
+| `GET /health` 回傳 404 | WebAPI 未註冊 Health Checks | 屬 `src/` 問題：記入 `productionObservations[]`，不自行加入 |
 | `GetConnectionStringAsync` 回傳 null | 使用了 `IConfiguration` 而非 Aspire API | 改用 `App.GetConnectionStringAsync("resourceName")` |
-| TLS/SSL 憑證錯誤（Redis） | Aspire 13.1.0+ Redis TLS 預設啟用 | 加入 `.WithoutHttpsCertificate()` |
-| `ContainerLifetime` 未設定 | 每次測試重啟容器導致超時 | 加入 `.WithLifetime(ContainerLifetime.Session)`（Aspire 9.0+） |
+| TLS/SSL 憑證錯誤（Redis） | Aspire 13.1.0+ Redis TLS 預設啟用 | 屬 AppHost 設定：記入 `productionObservations[]`（`options[]` 可列 `.WithoutHttpsCertificate()`） |
+| `ContainerLifetime` 未設定 | 每次測試重啟容器導致超時 | 屬 AppHost 設定：記入 `productionObservations[]`（`options[]` 可列 `.WithLifetime(ContainerLifetime.Session)`，Aspire 9.0+） |
 
 ### 測試失敗
 
@@ -223,7 +224,7 @@ dotnet test <solution-path> --no-build --verbosity minimal --blame-hang-timeout 
 1. **最多 5 次迭代** — 超過 5 次仍失敗，停止並回報（Aspire 測試因環境複雜度較高，需更多修正空間）
 2. **每次只修正一類問題** — 不要同時修正多個不相關的錯誤
 3. **修正後必須重新建置** — 每次 `Edit` 後都要 `dotnet build` 確認
-4. **不修改 source code（有例外）** — 原則上只修改測試程式碼。**例外**：Health Checks 缺失、`ContainerLifetime.Session` 未設定、Redis TLS 問題
+4. **不修改 source code** — 只修改測試程式碼；AppHost 與 API 專案一律不動，問題以 `productionObservations[]` 回報，由使用者決定
 5. **記錄每次修正** — 在回報中列出修正歷史
 
 ---
@@ -238,7 +239,7 @@ dotnet test <solution-path> --no-build --verbosity minimal --blame-hang-timeout 
 
 ```json
 {
-  "executedAt": "ISO 8601 timestamp",
+  "executedAt": "2026-03-14T09:41:07+08:00",
   "testProjectPath": "tests/MyProject.AppHost.Tests/MyProject.AppHost.Tests.csproj",
   "testFilePaths": ["tests/MyProject.AppHost.Tests/Integration/OrdersApiTests.cs"],
   "buildResult": "success",
@@ -259,9 +260,11 @@ dotnet test <solution-path> --no-build --verbosity minimal --blame-hang-timeout 
     }
   ],
   "failedTestDetails": [],
-  "addedPackages": []
+  "productionObservations": []
 }
 ```
+
+> **`productionObservations[]`**：流程中發現的生產程式碼問題，每筆 `{ file, location, issue, options[] }`——`options[]` 列出可能的處理方式。**只描述、不修改**；沒有發現時輸出 `[]`，不得省略此欄位。生產程式碼問題導致的測試失敗一律**保留失敗、回報、不修**。
 
 > **`controllerName` 取得方式**：優先從 analysis JSON 取得；若未讀取交接檔案，從測試檔案名稱推導。
 
@@ -270,12 +273,13 @@ dotnet test <solution-path> --no-build --verbosity minimal --blame-hang-timeout 
 寫入交接檔案後，回傳給 Orchestrator 的精簡摘要：
 
 1. **`status`**：`"completed"` 或 `"partial"`
-2. **`totalTests`**：測試總數
+2. **`totalTests`**：測試總數——該 writer-result 所列測試檔的案例數；同專案多目標時各記自身
 3. **`passedTests`**：通過數
 4. **`failedTests`**：失敗數
-5. **`fixRounds`**：修正迴圈次數
-6. **`executorResultFilePath`**：交接檔案路徑
-7. **`testFilePaths`**：測試檔案路徑清單
+5. **`fixRounds`**：實際執行的修正輪數（首次即通過為 0，與 `fixHistory` 長度相等）
+6. **`productionObservations`**：發現的生產程式碼問題（無則 `[]`）
+7. **`executorResultFilePath`**：交接檔案路徑
+8. **`testFilePaths`**：測試檔案路徑清單
 
 **回傳結果的正確性要求**：
 
@@ -333,7 +337,7 @@ node -e "const fs=require('fs'),p='{testProjectDir}/.orchestrator';console.log(f
 1. **Docker + Aspire 雙重檢查** — Step 0 和 Step 0.5 都是必要步驟，不可跳過
 2. **先建置再測試** — 永遠 `dotnet build` 成功後才 `dotnet test --no-build`
 3. **低警告等級** — 建置時使用 `-p:WarningLevel=0 /clp:ErrorsOnly` 減少雜訊
-4. **不修改 source code** — 只修改測試程式碼，不修改 AppHost 或 API 專案（有例外）
+4. **不修改 source code** — 只修改測試程式碼，不修改 AppHost 或 API 專案
 5. **完整回報** — 包含 Docker 狀態、Aspire workload 狀態、建置結果、測試結果、修正歷史
 6. **防掛保護（必要）** — `dotnet test` 必須使用 `--blame-hang-timeout` 參數
 7. **精確錯誤分類** — 區分「測試碼錯誤」vs「環境問題」

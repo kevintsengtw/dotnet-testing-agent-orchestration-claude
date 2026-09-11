@@ -2,7 +2,7 @@
 // -*- coding: utf-8 -*-
 //
 // skills.test.js — skill-registry / skills-doctor 的單元測試（純 Node assert，零依賴）
-// 執行：node .claude/scripts/skills/skills.test.js
+// 執行：node .claude/scripts/dotnet-testing-claude-full/skills.test.js
 
 "use strict";
 

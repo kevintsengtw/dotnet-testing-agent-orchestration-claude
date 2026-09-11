@@ -2,6 +2,199 @@
 
 所有重要變更都記錄於此。格式參考 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [v1.7.2] - 2026-09-11
+
+v1.7.0／v1.7.1 兩版都是「發現一個、修一個、發一版」。本版先做「規則 × 工作流程 × 角色」對照稽核，
+把決定性的契約缺口一次補齊；驗證過程中確認 v1.6.0 的方向（**Skill 是知識來源不是法典、硬約束只有專案慣例／輸出契約／全綠三類、
+其餘可偏離記 `deviations`、產出非決定性**）只寫在 CHANGELOG、CLAUDE.md 漏記，本版補記為常駐規則，
+並把 tunit／integration／aspire 的 Writer 依此方向分層修剪，撤回以單次執行結果疊加的技術規則。
+第二輪把九條驗證（U-02～U-07、T-02、I-02、A-02）的 49 項待議歸併為 13 個根因群，依「決定性缺口／非決定性樣本／設計題」
+三分處理：決定性缺口才改，非決定性樣本明列不動。改動以刪為主，允許的加只有交接欄位。
+第三輪在第二輪改版後的定義檔上重跑同九條，67 項待議再歸為 13 群，收成 D1～D8 一次做完（見 `round3-synthesis.md`）：
+決定性缺口只剩「Skill 短識別碼沒有定義」與「unit Reviewer 偏離審查沒有欄位槽」兩項，其餘是四套欄位語意一致性、
+耗時工具的三個計算行為，以及記錄面判準。**九條 `src/` 全程零變更，C1～C7 的四項決定性目標全數達成。**
+**四階段協作、錯誤代碼、交接檔案路徑、Writer／Reviewer 的流程步驟與輸出格式一律未變更；計時 hook 本版移除（耗時改由 `token_usage.js report` 提供）。**
+
+### 重構
+
+- **rule-parity 第五輪驗證與收尾**：以 E1～E12 實作後的定義檔重跑同九條，78 項待議收成 12 個根因群
+  （見 `round5-synthesis.md`）。**E2／E3／E4／E5／E6／E7／E8(a)／E9／E10 全部達成且跨四套穩定**——
+  第四輪的具體問題逐一消失：`skillsLoaded` 字面規則與識別碼表打架、`modifiedAt` 占位或捏造、
+  Reviewer 誤判「integration 尚無契約層文件」、aspire 四處重述 Skill 造成的打架。
+  **九條 `src/` 全程零變更、耗時表全部封閉、多目標 Executor 逐目標 `--filter` 對帳。**
+  唯一找到的缺陷是 Skill 短識別碼在 Reviewer 側不一致，修法見下一條
+- **統一 `awesome-assertions` 的短識別碼**：四套 Writer 的 Skill 表一律用 `awesome-assertions`，
+  但三套 advanced Reviewer 的表寫成目錄名形式 `awesome-assertions-guide`，unit Reviewer 更是
+  同一份檔案的表寫前者、回傳 JSON 範例寫後者。**這是同一個 Skill 在定義檔內有兩個名字**，
+  九個樣本 7 錯 2 對、跨四套全中——不是 Reviewer 不守規則，是規則自己打架。
+  修法為**六行字串對齊**（四個 Reviewer 檔），未新增任何規則或說明句，淨行數 0。
+  依「刪除與消除矛盾不需要以整輪重跑驗證，新增才需要」的原則，本項不觸發重跑
+
+- **rule-parity 第四輪通盤分析後的定義檔改版（E1～E12）**：九條 93 項待議收成 19 個根因群，
+  方向一律是刪矛盾與刪重述，不是加規則。四套 Writer 的 `skillsLoaded` 刪去與同檔識別碼表打架的字面規則、
+  刪 `modifiedAt`（三次占位或捏造、無人消費）、把「不得以檔案搜尋探查版本」收斂為「不查最新可用版本」
+  並明列 `.csproj` 為允許來源；四套 Reviewer 的 read-scope 開一個例外讓它讀得到只存在於 Writer 檔的契約層清單，
+  並補一句劃界「Skill 推薦做法不構成建議層偏離」；unit Analyzer 刪掉自身範例就違反、Reviewer 也不查的
+  「每段最多 6 個中文字」；aspire 定義檔刪去四處重述 Skill 而與 Skill 打架的規則。
+  四套 orchestrator SKILL 補多目標 Executor 的 prompt 寫法與等待 subagent 的做法，
+  並刪掉在 Analyzer 改為「只描述不指派」後已無資料來源的「需要 [技術清單]」狀態行。
+  另記一項判定原則：**明文禁令存在卻被違反不算缺口**——四套都禁止 Writer 自行 `dotnet build`，
+  四條仍全部違反，加強語氣只會多一條被繞過的規則，改列為已知偏離
+
+- **腳本目錄合併為 `.claude/scripts/dotnet-testing-claude-full/`**：原本分成 `.claude/scripts/skills/`
+  （registry／doctor／測試）與 `.claude/scripts/token-usage/`（耗時與 token 引擎、單價範本）兩個目錄，名稱通用、
+  與其他工具放進同一個 `.claude/scripts/` 時容易撞名，也看不出屬於哪一套。六個檔案合併到單一具辨識度的目錄，
+  平放不再分層（目錄深度不變，兩支腳本解析 repo root 的相對層數不受影響）。四套 orchestrator SKILL 的
+  `token_usage.js start`／`report` 呼叫路徑、安裝與驗證文件的 `skills-doctor.js` 路徑同步更新；
+  同步流程仍是 `.claude/scripts/` 全鏡射（`rsync --delete`），正式 repo 的舊目錄會自動移除
+
+- **耗時來源由計時 hook 改為 `token_usage.js report`，hook 移除**：`dotnet-testing-agent-timer-pre/post.sh` 量的是
+  PreToolUse→PostToolUse 的間隔，Agent 以背景啟動時 tool call 立即返回，實跑 2～4 分鐘的 Analyzer 全部被記成「2 秒」——
+  七次實跑無一例外，orchestrator 每次都自行改用別的來源，耗時表的數字從來不是 hook 給的。
+  `token_usage.js` 已對每個 `subagents/*.jsonl` 算出時間窗，時長 = hi − lo，與 CLI 通知逐項誤差 ≤ 1 秒。
+  `report` 的 stdout 因此多輸出一張「⏱ 各階段耗時」表（每個 subagent 一行、階段耗時取同階段最長者、總計為四階段之和、
+  cleanup 另列不計入），報告的 Subagent 明細加「耗時」欄；四套 SKILL 刪掉「時間追蹤方式（Hook 自動化）」整段與
+  必呈現的耗時表範本，改為「貼出 `report` 的兩張表」一條規定。`.claude/hooks/`（兩支計時腳本 + `install-hooks.js`）
+  與只承載 hooks 註冊的 `.claude/settings.json` 一併移除，安裝文件的「安裝計時 Hook」步驟同步刪除
+- **`src/` 修改授權四套統一為「不改、只回報」**：原本 unit 需使用者同意、tunit 無規定、integration 的 Executor prompt 模板
+  固定寫「生產程式碼 Bug 修正授權：是」、aspire 定義 `WithLifetime(Session)` 為「唯一授權的生產程式碼修改」——
+  實跑中 integration 改了 DTO nullability、aspire 改了 AppHost，兩次使用者都沒被問。四套改為流程內一律不改 `src/`，
+  發現的問題以交接欄位 `productionObservations[]`（`{ file, location, issue, options[] }`）回報，orchestrator 顯著呈現並等使用者決定；
+  生產程式碼問題導致的測試失敗保留失敗、不修。unit 的 `productionRefactorOptIn`／`productionRefactorSuggestion`
+  與 integration 的 `productionBugFixes` 併入同一欄位
+- **範圍過濾補交接欄位 `excludedMethods`**：提示詞只指定部分方法時，Analyzer 正確收斂 `methodsToTest`，
+  但交接檔案沒有欄位說「哪些被排除」，Reviewer 的「每個公開方法至少一個正常路徑」於是把範圍外的方法判為缺漏（實跑 10 筆 `missingTestCases`、評級 C+）。
+  `excludedMethods` 改為不分模式一律輸出（無排除時 `[]`），Reviewer ③ 與 Writer 完整性原則改錨定 `methodsToTest`，
+  orchestrator 的「採用摘要」改為「範圍摘要」，採用與過濾共用
+- **unit Writer 分層修剪**（554 行 → 334 行）：比照 v1.7.2 稍早對另三套做過的分層。刪除「測試類別標準範本（必須照抄）」
+  的完整骨架與八項固定規則（using 順序、欄位順序、ctor 區塊順序、region 風格、XML 註解格式、三種變體）、
+  四段「必須」的寫法指派（共用欄位、FakeTimeProvider 初始時間、共用 helper、建構子測試寫法）、`.csproj` 套件對應表；
+  Step 4.5 自我檢查表 22 列縮為 5 列（未寫入磁碟／英文命名／英文識別字入名／缺建構子測試／建議層偏離未記錄）；
+  重要原則刪去重述契約層與建議層的四條。建構子場景全數落地升為契約層第 6 項，其餘降為建議層
+- **四套 Writer 的版本適配邏輯統一為四句**（新增對齊生產／既有不動／不降版／逐筆揭露）：主版號對齊、NU1605 處置、
+  `TimeProvider.Testing 10.0.0 不含 lib/net10.0` 等屬 Skill 知識或單次結果，一併刪除
+- **四套 Reviewer 的偏離審查統一為同一句**：「逐筆判定成立／部分成立／不成立；未記錄的建議層偏離另列；`[]` 時明說無偏離紀錄」。
+  unit Reviewer 重述 Writer 建議層的 6 列對照表刪除
+- **Analyzer 的分類表改回描述語氣**：unit 的 `legacy` 判定改為「依賴寫死靜態資料的類別」才算（純 BCL 時鐘／IO 記入 `directIoOperations` 交 Writer 判斷），
+  刪「同時有注入仍判 legacy」；integration 的容器偵測表刪「有套件就列容器」的絕對語氣與 `postgres:latest`／`mongo:latest` 映像欄
+  （映像選擇是 Skill 知識，且與 Reviewer「避免 `latest`」相矛盾）
+- **Skill 指派改回 Writer 自選**：刪 unit Writer 規則檔表的「同時必讀的 Skill」欄；tunit Analyzer 的 `requiredSkills`
+  固定為 `tunit-fundamentals`，`tunit-advanced` 移到 Writer 的自選表，由 Writer 依 `tunitFeatureRequirements` 判斷
+- **跨角色字面矛盾八項一次消除**：`unit-writer-validator.md` 規則 B 的「保持 `.csproj` 不動」改為「不為取得 FluentValidation 新增套件或 ProjectReference」；
+  150% 上限只留建議層一處；四套 `writer-result` 統一 `testMethodCount`／`testCaseCount` 雙欄（後者與 Executor `totalTests` 對帳）；
+  integration 的「> 15 必執行分兩批」降為建議、Step 5 的合併警告縮為一句；刪 unit Executor 從未被傳入的 `testFilter` 與「分割模式」字句；
+  刪 unit orchestrator 多目標彙整的「展示測試程式碼」（與必呈現的「不嵌入測試程式碼」相反）
+- **unit Executor 的 `fixRounds` 說明對齊另三套**：刪三行計數範例，改用「實際修正輪數，與 `fixHistory` 長度相等，首次即通過為 0」
+- **兩份 Skill 修改建議**：`SKILL_FIX_PROPOSAL_dotnet-testing-advanced-aspire-testing.md` 增列案 2（不以固定延遲取代就緒探測——
+  原本 aspire Writer 嚴禁表寫「`Task.Delay()` 硬式等待」，與 Skill 示範的重試退避字面衝突）；新增
+  `SKILL_FIX_PROPOSAL_dotnet-testing-datetime-testing-timeprovider.md`（`FakeTimeProvider.SetUtcNow` 不可回設較早時間，
+  8.0.0／9.0.0／10.9.0 實測一致，Skill 全文未記載且〈時間倒轉〉一節易誤解）
+  第三輪另把 A-02 的 aspire 樣本併入 `SKILL_FIX_PROPOSAL_dotnet-testing-advanced-webapi-integration-testing.md` 第 1 項（D7）——
+  `aspire-testing` 範本的 `DatabaseManager` 同樣在 `IntegrationTestBase` 建構子每個測試重建、`_respawner` 快取失效，
+  與 webapi 範本同一根因，修法對應為移到 `AspireAppFixture`
+- **CLAUDE.md 補記「Agent 定義檔的設計方向」**：Skill 是知識來源；硬約束三類；產出非決定性，單次執行只驗契約性質，不得因單次結果往定義檔加規則；技術知識缺口修在 Skill（proposal）不修在 agent；定義檔只減不增
+- **tunit／integration／aspire Writer 分層修剪**（tunit 33KB → 18KB、integration 37KB → 18KB、aspire 維持 15KB）：
+  流程步驟、writer-result 結構、精簡摘要格式、嚴禁的模式表全部保留；撰寫規則改為「契約層（框架必要條件 + 專案慣例 + 場景全數落地）／
+  建議層（一行一條、可偏離記 `deviations`）／已知限制（事實表）」；與 Skill 重複的程式碼範本（WebApiFactory 兩份完整類別、
+  DatabaseManager、ProblemDetails 範例、TUnit 參數化與生命週期範例等）刪除，改指向 Skill 的 `templates/`；
+  tunit Writer 的 Skill 表補上依依賴自選的技術 Skill（nsubstitute、datetime、filesystem、fluentvalidation、awesome-assertions 等），
+  知識從 Skill 來而不是抄進定義檔
+- **三個 Reviewer 最小加法**：Step 0 讀 `writer-result.deviations`、新增「偏離審查」面向（理由成立不算缺失、不得建議與建議層相反的方向）、
+  重要原則補「Skill 是判斷依據，不是對照清單」；審查面向編號、報告格式、評級標準不動
+- **撤回本版稍早以單次執行結果加入的技術規則**：MockFileSystem 先建目錄、Location 標頭大小寫、就緒探測細節、`DatabaseManager` 單例與
+  `[Collection]` 位置的「不得」——這些是 Writer 在不同 session 的寫法差異，由 Reviewer 與修改流程吸收；留為建議層預設做法或寫進 skill proposal
+
+- **定義 Skill「短識別碼」**（D2）：四套 Writer 的 `skillsLoaded` 說明只寫「短識別碼」，從未定義是什麼。
+  第三輪六次實跑 writer-result 記 `awesome-assertions`、同次 Reviewer 記 `awesome-assertions-guide`，下游無法對 registry 稽核。
+  四套各補一句「＝ `.agents/skills/` 目錄名去 `dotnet-testing-` 前綴」，**不列清單**
+- **unit Reviewer 回傳格式補 `deviationReview[]`**（D3）：v1.7.2 稍早已把四套的偏離審查統一為同一句，
+  但 unit Reviewer 的回傳 JSON 沒有對應欄位，五次實跑分別寫進 `summary`／`positives`／自造物件／獨立 Markdown 段。
+  補 `{ rule, verdict, note }` 一欄，②的判定句指向該欄；三套 advanced Reviewer 是 Markdown 報告、載體本就穩定，不動
+- **交接欄位語意四項**（D4）：刪四套 Executor 的 `addedPackages`（與 `nugetChanges` 重複、四套皆無語意說明，
+  實跑一套回 `[]`、一套回抄 Writer 的 8 筆）；unit 的 `skillsConsulted` 改名 `skillsLoaded` 與另三套對齊
+  （含 unit Reviewer 自身欄位與 orchestrator SKILL、README、使用指南的所有引用）；`executedAt` 的範例值
+  `"ISO 8601 timestamp"` 改為真實格式範例（占位字串讓模型四次填出 `T00:00:00Z` 占位值）；
+  四套 `totalTests` 補「該 writer-result 所列測試檔的案例數；同專案多目標時各記自身」
+- **刪 unit Writer 程式碼組織的句尾**（D5）：「每個 region 對應一個被測試方法的所有測試案例」——
+  validator 只有一個 `Validate` 方法，六個 Writer 樣本一律依屬性切 region、六個 Reviewer 一律判合規。刪字面，**不加 validator 例外**
+- **integration Reviewer 的 Step 3 改為選擇性**（D6）：原本無條件要求 `dotnet test --no-build` 重跑，
+  與 aspire（Executor 全綠則跳過）、tunit（明寫選擇性執行）不一致。改為「Executor 已確認全數通過時跳過；否則自行執行確認」，
+  unit 不加此步驟。全綠的單一來源是 Executor
+
+### 修正
+
+- **耗時表的三個計算行為**（D1，`token_usage.js`）：總計原以原始浮點累加、各階段各自四捨五入，
+  八次實跑總計與四階段顯示值相加差 1 秒——改為各階段取整後相加，顯示值封閉；同階段多列原一律標「N 個平行」並取最長者，
+  循序執行的多批 subagent 因此被低估牆鐘（實跑 6:29 vs 實際 10:55）——改為檢查 `[lo, hi]` 時間窗，
+  重疊標「N 個平行」取最長、不重疊標「N 個循序」取相加；註解移除「Phase 0／Phase 5 cleanup 另列」的字面
+  （`report` 依四套 SKILL 規定在 Phase 5 之前執行，該時點 Phase 5 的 cleanup 尚不存在）。`token_usage.test.js` 補 6 項（89 → 95）
+- **建構子建立成功場景的斷言**：unit Writer 撰寫規範與 tunit Writer 3.10.5 原示範 `sut.Should().NotBeNull()`，
+  `new` 要嘛拋例外、要嘛非 null，該斷言恆真。改為 `var act = () => new {Type}(...)` 搭配 `act.Should().NotThrow()`。
+  unit Reviewer「避免 NotBeNull 就結束」與 tunit Reviewer「不可僅驗證不拋例外」同步補上此場景的例外，
+  避免 Reviewer 反過來把正確的 `NotThrow()` 標成問題
+- **integration／aspire 的 Analyzer 與 Reviewer 補場景命名英文識別字判準**：與 v1.7.1 修 tunit 的是同一類缺口。
+  兩套的 Writer 早有機械判準，Analyzer 重要原則 5 卻只有一句「中文三段式」、Reviewer 4a 沒有對應檢查列。
+  Analyzer 展開判準與白名單（含回應型別名、HTTP 標頭與協定名；aspire 另含 Resource 與服務名稱）並在 Step 6.5
+  新增逐一場景名對帳；Reviewer 4a 新增「英文識別字殘留」檢查列
+- **tunit Writer 的 `deviations` 欄位**：v1.7.0 的 3.10.5 要求略過建構子場景時記錄於 `writer-result.deviations`、
+  Reviewer 也讀此欄位，但 writer-result 結構從未定義它。補上欄位與「無偏離時輸出空陣列、不得省略」
+- **tunit Writer 補單一檔案原則與路徑跨平台**：前者 unit Writer 與 tunit orchestrator 都有、唯獨 tunit Writer 沒有；
+  後者 unit 為契約層規則，tunit 練習專案含 `IFileSystem` 標的卻沒有對應規則。tunit Reviewer 4c 同步補跨平台檢查列
+- **aspire Writer 補靜默改版禁令**：禁止降版、禁止靜默改版（逐筆列入 `nugetChanges`）、禁止虛造版本號，
+  與其他三套一致
+- **aspire Executor 修正迴圈次數自相矛盾**：步驟寫「最多重試 3 次」、規則寫「最多 5 次迭代」，
+  orchestrator 與 architecture 文件皆為 5，統一為 5；`docs/guides/aspire-testing.md` 同步
+- **unit Reviewer／Writer 補 `ThrowExactly<T>` 禁令**：其他三套 Reviewer 都有，unit 沒有
+- **integration／aspire Analyzer 補「每條驗證規則各一個 400 場景」**：unit Analyzer 的 validator 流程早有「每條規則各一場景、禁止合併遺漏」，
+  integration Step 3.4 與 aspire 3d 只到「讀取驗證規則」，Writer 拿到的驗證場景只有 3 條，Reviewer 每次都標 🔴 覆蓋率
+  （phantom-api exp-04-r2 與本輪 I-01 的發現一字不差）。補上展開規則、共用 Validator 端點各自列、條件式規則 null／空字串各一，Step 6.5 補對帳
+- **integration Writer 內建範本 `CustomWebApplicationFactory.DisposeAsync()` 補 `await base.DisposeAsync()`**（`new` 隱藏了 Host 釋放，這是 agent 自己的範本錯）。
+  `DatabaseManager` 持有位置與 `[Collection]` 標記位置屬技術知識，只在 Rule 5／6 標為「預設做法、依 skill 範本、可判斷調整」，
+  共用 skill 範本的問題見 `docs/skills/SKILL_FIX_PROPOSAL_dotnet-testing-advanced-webapi-integration-testing.md`
+- **aspire Writer Rule 1、5～10 原本只有標題沒有內文**（20 個定義檔全面掃描，空段落僅此一檔），已隨分層修剪併入契約層／建議層
+- **aspire Writer 狀態碼方法列表補齊**：Rule 3 只列 200／201／404，出路條款還示範退回 `StatusCode.Should().Be(HttpStatusCode.Conflict)`，
+  Reviewer 4b 每次都標。補 204／400／409 完整列表，出路條款改例
+- **四個 Writer 的 `nugetChanges` 涵蓋範圍統一**：原寫「新增或修改的 NuGet 套件」，A-01 的 `ProjectReference` 新增因此未列。
+  改為 `.csproj` 任何變動每筆一條（PackageReference、ProjectReference、`<Using>`）
+- **tunit 補 `filesystem-testing-abstractions` 的載入線**：unit 的 Analyzer／Writer／Reviewer 都會在 `IFileSystem` 目標載入這個共用 skill，
+  tunit 三個角色的 skill 表只有兩個 TUnit skill。T-01r 的 Writer 用 `File.WriteAllTextAsync` 寫前置資料未先建目錄，9 個測試倒、多一輪修正；
+  該 skill 明寫「寫入前確保目錄存在」。三個角色補上載入條件；**不在 agent 重述 skill 內容**
+- **`fixRounds` 語意四套統一**：tunit Executor 原定義 `fixRounds: 1` 為「首次即通過」（1-based），unit／integration 為 0-based，
+  tunit orchestrator 得自行翻譯。統一為「實際修正輪數，與 `fixHistory` 長度相等，首次即通過為 0」，四個 Executor 欄位說明一併寫明
+- unit Writer 撰寫規範兩個「3.」重複編號，建構子測試改為第 4 條
+
+### 變更
+
+- **16 個 Agent 定義檔 frontmatter 加 `effort: high`**：subagent 的推理強度原本繼承使用者 session 設定，行為隨使用者環境漂移。
+  釘為 `high` 後 Analyzer／Writer／Executor／Reviewer 在任何 session 設定下行為一致；`model: sonnet` 維持不變（別名在 Anthropic API 解析為 Sonnet 5）。
+  代價是 token 與耗時上升，以 Writer 最明顯
+
+### 文件
+
+- **公開 repo 文件對齊「不改 `src/`、只回報」**：`PUBLIC_REPO_DOCS/architecture/integration-orchestrator.md` 的
+  「特殊能力：生產程式碼修正」整節改寫為「生產程式碼問題：只回報，不修改」（允許／不允許修正範圍的兩張表刪除，
+  改為 `productionObservations[]` 的欄位表與測試失敗處理），Phase 3 段與文件索引的說明同步；
+  `guides/integration-testing.md` 的「特殊能力」段改為不修改生產程式碼；
+  aspire／tunit／unit 三份架構文件的 Phase 3 補同一條規定，Executor 輸出摘要補 `productionObservations`
+- **unit 文件補 `excludedMethods`**：`architecture/unit-orchestrator.md` 的 Analyzer 輸出摘要補此欄位，
+  並說明 Reviewer 的完整性檢查以 `methodsToTest` 為錨、不把範圍外的方法判為缺漏
+- **`PUBLIC_REPO_README.md` 的結果呈現契約**：「非測試程式碼變更」改為「生產程式碼觀察」，
+  並補一段說明為什麼由「可修正生產程式碼」改為「只回報」（實測兩次改動 DTO nullability 與 AppHost，使用者事前都沒被問）
+- **`docs/RELEASE.md` 同步表更新**：刪去已移除的 `.claude/hooks/` 與 `.claude/settings.json` 兩列，
+  補 `PUBLIC_REPO_DOCS/` → `docs/` 一列（刻意不帶 `--delete`）與 Action 清理舊 hook 佈署的說明，commit 訊息範本同步
+
+### 驗證
+
+第一輪四條、第二輪九條、第三輪九條端到端，協定與判準見 `docs/comparison/verification/rule-parity/`，
+根因歸併與變更決定見 `round2-synthesis.md`、`round3-synthesis.md`。定義檔改版後前三輪結果一律作廢為歷史，
+以本段列出的改動為基準整輪重跑（第四輪）。
+
+記錄面同步收尾（D8）：`PROTOCOL.md` 第 7 節補第五個陷阱（`TestResults/` 被 `.gitignore:53` 擋、`git clean -fdq` 不清）、
+第 8 節還原指令補 `rm -rf` 與「還原後隔一小段再核對一次」（IDE 會自動 restore 長回 `bin/obj`）、第 1 節補使用者貼回被截斷時的處置；
+rule-parity `README.md` 契約表三處判準改寫（場景落地改判「案例數 ≥ 場景數且每場景可對應一個方法或一列資料」、
+「獨立重跑一致」改為「全綠以 Executor 為單一來源」、`nugetChanges` ↔ diff 只比對 `PackageReference`／`ProjectReference`／`<Using>` 的增刪與版本），
+並補記第三輪的兩處判準勘誤（命名白名單本就在四套 Reviewer 定義檔；T-02 Reviewer 跳過 Step 3 合規，`round3-synthesis.md` §6 勘誤 2 本身有誤）。
+
 ## [v1.7.1] - 2026-09-05
 
 修正 tunit Analyzer 產出的場景名稱殘留英文識別字。tunit 的 Writer（重要原則 7）與 Reviewer

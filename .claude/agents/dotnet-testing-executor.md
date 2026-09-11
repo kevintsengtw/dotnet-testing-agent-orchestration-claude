@@ -9,6 +9,7 @@ tools:
   - Edit
   - Write
 model: sonnet
+effort: high
 maxTurns: 50
 permissionMode: bypassPermissions
 ---
@@ -30,7 +31,6 @@ permissionMode: bypassPermissions
 3. **Writer 新增的 NuGet 套件資訊**（可選）— 如果 Writer 有新增套件，告知以便排查相容性問題
 4. **`analysisFilePath`**（可選）— Analyzer 交接檔案路徑，用於取得 `className` 和完整分析上下文
 5. **`writerResultFilePath`**（可選）— Writer 交接檔案路徑，用於取得 `testFilePaths` 和 `testClasses`
-6. **`testFilter`**（可選）— `dotnet test --filter` 參數值，用於只執行特定測試類別（多目標或分割模式時由 Orchestrator 提供）
 
 > **向下相容**：如果呼叫者未提供交接檔案路徑（`analysisFilePath`、`writerResultFilePath`），則使用 prompt 中直接傳遞的資訊。此機制確保手動呼叫時仍可正常運作。
 
@@ -114,14 +114,6 @@ dotnet build <測試專案路徑> -p:WarningLevel=0 /clp:ErrorsOnly --verbosity 
 dotnet test <測試專案路徑> --no-build --verbosity minimal
 ```
 
-**如果 prompt 中提供了 `testFilter`**，加上 `--filter` 參數：
-
-```bash
-dotnet test <測試專案路徑> --no-build --verbosity minimal --filter "{testFilter}"
-```
-
-> **注意**：`testFilter` 由 Orchestrator 計算，格式為 `FullyQualifiedName~{ClassName}Tests`。多個類別用 `|` 連接。此參數確保只執行當前目標的測試，避免重複執行其他目標的測試。
-
 **如果全部通過**，跳到 Step 5 回傳結果。
 
 **如果有測試失敗**：
@@ -140,11 +132,7 @@ dotnet test <測試專案路徑> --no-build --verbosity minimal --filter "{testF
 
 重複 Step 2 → Step 3，直到所有測試通過。
 
-**修正迴圈計數規則**：
-
-- 第 1 輪：初次建置 + 執行
-- 第 2 輪：修正後重新建置 + 執行
-- 第 3 輪：再次修正後重新建置 + 執行
+**`fixRounds` 語義**（四套工作流程一致）：`fixRounds` 是**實際執行的修正輪數**，與 `fixHistory` 陣列長度相等。第一次建置與執行即全數通過 = `fixRounds: 0`、`fixHistory: []`；修正一次後通過 = `fixRounds: 1`。
 
 **如果 3 輪後仍有失敗**：
 
@@ -162,7 +150,7 @@ dotnet test <測試專案路徑> --no-build --verbosity minimal --filter "{testF
 
 ```json
 {
-  "executedAt": "ISO 8601 timestamp",
+  "executedAt": "2026-03-14T09:41:07+08:00",
   "testProjectPath": "tests/MyProject.Core.Tests/MyProject.Core.Tests.csproj",
   "testFilePaths": ["tests/MyProject.Core.Tests/Services/ProductServiceTests.cs"],
   "buildResult": "success",
@@ -181,9 +169,11 @@ dotnet test <測試專案路徑> --no-build --verbosity minimal --filter "{testF
     }
   ],
   "failedTestDetails": [],
-  "addedPackages": []
+  "productionObservations": []
 }
 ```
+
+> **`productionObservations[]`**：流程中發現的生產程式碼問題，每筆 `{ file, location, issue, options[] }`——`options[]` 列出可能的處理方式。**只描述、不修改**；沒有發現時輸出 `[]`，不得省略此欄位。生產程式碼問題導致的測試失敗一律**保留失敗、回報、不修**。
 
 > **`className` 取得方式**：優先從 analysis JSON 取得；若未讀取交接檔案，從測試檔案名稱推導（去掉 `Tests.cs` 後綴）。
 
@@ -192,12 +182,13 @@ dotnet test <測試專案路徑> --no-build --verbosity minimal --filter "{testF
 寫入交接檔案後，回傳給 Orchestrator 的精簡摘要：
 
 1. **`status`**：`"completed"` 或 `"partial"`
-2. **`totalTests`**：測試總數
+2. **`totalTests`**：測試總數——該 writer-result 所列測試檔的案例數；同專案多目標時各記自身
 3. **`passedTests`**：通過數
 4. **`failedTests`**：失敗數
-5. **`fixRounds`**：修正迴圈次數
-6. **`executorResultFilePath`**：交接檔案路徑
-7. **`testFilePaths`**：測試檔案路徑清單
+5. **`fixRounds`**：實際執行的修正輪數（首次即通過為 0，與 `fixHistory` 長度相等）
+6. **`productionObservations`**：發現的生產程式碼問題（無則 `[]`）
+7. **`executorResultFilePath`**：交接檔案路徑
+8. **`testFilePaths`**：測試檔案路徑清單
 
 **回傳結果的正確性要求**：
 
@@ -289,7 +280,7 @@ node -e "const fs=require('fs'),p='{testProjectDir}/.orchestrator';console.log(f
 1. **dotnet-test Skill 優先** — 所有建置與執行操作都依照 `dotnet-test` Skill 的指引
 2. **Build-first** — 永遠先 `dotnet build` 確認編譯通過，再 `dotnet test --no-build`
 3. **最多 3 輪** — 修正迴圈不超過 3 輪，超過就回報需要 Writer 介入
-4. **不改動被測試目標** — 只修改測試相關檔案，不修改 `src/` 下的生產程式碼
+4. **不改動被測試目標** — 只修改測試相關檔案，**任何情況都不修改 `src/` 下的生產程式碼**；發現生產程式碼問題時記入 `productionObservations[]` 回報，由使用者決定
 5. **完整回報** — 即使有失敗，也要回傳詳細的錯誤訊息和分析，方便後續處理
 6. **精確修正** — 每次修正只改必要的部分，不要大幅重寫測試邏輯
 7. **禁止幻覺** — 回傳結果中的所有測試名稱、方法名稱、數量必須直接來自 `dotnet test` 的實際輸出，嚴禁自行猜測或編造不存在的名稱

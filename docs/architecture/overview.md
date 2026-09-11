@@ -5,7 +5,6 @@
     - [Agent Orchestration](#agent-orchestration)
     - [為何 Orchestrator 使用 Skill 而非 Agent](#為何-orchestrator-使用-skill-而非-agent)
     - [bypassPermissions 設計](#bypasspermissions-設計)
-    - [計時 Hook 設計](#計時-hook-設計)
   - [2. 系統架構圖](#2-系統架構圖)
   - [3. Agent 分組](#3-agent-分組)
   - [4. 標準工作流程](#4-標準工作流程)
@@ -43,17 +42,6 @@ Claude Code 的 Agent tool 必須在**主對話（main thread）**中才能呼�
 
 Executor Subagent 在執行 `dotnet build` 和 `dotnet test` 時，若沒有此設定，Claude Code 會在每次 Bash 工具呼叫前彈出手動確認提示。設定 `bypassPermissions: true` 後，Subagent 在其工作範圍內可自主執行這些指令，避免中斷工作流程。
 
-### 計時 Hook 設計
-
-`.claude/hooks/` 下設有兩個 Bash 腳本：`dotnet-testing-agent-timer-pre.sh`（PreToolUse）和 `dotnet-testing-agent-timer-post.sh`（PostToolUse）。
-
-這兩個 Hook 攔截所有 `subagent_type` 以 `dotnet-testing-` 開頭的 Agent tool 呼叫：
-
-- **PreToolUse**：記錄 Subagent 開始時間，並注入 `additionalContext`（`⏱ {subagent_type} 開始：HH:MM:SS`）
-- **PostToolUse**：計算耗時，注入完成時間與持續秒數（`⏱ {subagent_type} 完成：HH:MM:SS（開始：HH:MM:SS，耗時 M 分 S 秒）`）
-
-Hook 與 Orchestrator Skill 邏輯完全解耦：Orchestrator 不需要手動呼叫 `Bash(date)`，時間資訊自動出現在 Agent tool 的回傳結果中。若 Hook 未安裝，工作流程仍可正常執行，僅缺少耗時顯示。
-
 ---
 
 ## 2. 系統架構圖
@@ -61,12 +49,6 @@ Hook 與 Orchestrator Skill 邏輯完全解耦：Orchestrator 不需要手動呼
 ```mermaid
 graph TD
     Dev[👤 開發人員] -->|輸入斜線指令| Skill[📋 Orchestrator Skill\n主對話 context]
-
-    subgraph hooks [⏱ PreToolUse / PostToolUse Hook]
-        direction LR
-        H1[記錄開始時間]
-        H2[計算耗時並注入]
-    end
 
     subgraph pipeline [四階段 Subagent 流水線]
         direction TD
@@ -84,8 +66,7 @@ graph TD
         AS4[其他技術技能]
     end
 
-    Skill -->|委派，觸發 Hook| pipeline
-    hooks -.->|時間注入至 additionalContext| Skill
+    Skill -->|委派| pipeline
 
     AN & WR & RV -->|按需載入| external
     EX -->|執行| DT[dotnet build / dotnet test]
@@ -177,7 +158,6 @@ sequenceDiagram
     actor Dev as 👤 開發人員
     participant Main as 主對話
     participant Skill as Orchestrator Skill
-    participant Hook as ⏱ 計時 Hook
     participant AN as Analyzer
     participant WR as Writer
     participant EX as Executor
@@ -187,42 +167,27 @@ sequenceDiagram
     Main->>Skill: 載入 Skill context
     Skill->>Skill: Phase 0：Glob 檢查殘留 .orchestrator/
 
-    Note over Skill,Hook: 委派 Analyzer
-    Skill->>Hook: PreToolUse（Agent tool 呼叫前）
-    Hook-->>Skill: ⏱ Analyzer 開始：HH:MM:SS
+    Note over Skill,RV: 委派 Analyzer
     Skill->>AN: Agent(dotnet-testing-analyzer, prompt)
     AN-->>Skill: 分析摘要 + analysis.json 路徑
-    Skill->>Hook: PostToolUse（Agent tool 呼叫後）
-    Hook-->>Skill: ⏱ Analyzer 完成（耗時 M 分 S 秒）
 
-    Note over Skill,Hook: 委派 Writer
-    Skill->>Hook: PreToolUse
-    Hook-->>Skill: ⏱ Writer 開始：HH:MM:SS
+    Note over Skill,RV: 委派 Writer
     Skill->>WR: Agent(dotnet-testing-writer, analysisFilePath + 輸出路徑)
     WR-->>Skill: 測試檔案路徑 + testCount
-    Skill->>Hook: PostToolUse
-    Hook-->>Skill: ⏱ Writer 完成（耗時 M 分 S 秒）
 
-    Note over Skill,Hook: 委派 Executor
-    Skill->>Hook: PreToolUse
-    Hook-->>Skill: ⏱ Executor 開始：HH:MM:SS
+    Note over Skill,RV: 委派 Executor
     Skill->>EX: Agent(dotnet-testing-executor, 測試專案路徑 + 交接檔案路徑)
     EX->>EX: dotnet build
     EX->>EX: dotnet test
     EX-->>Skill: 通過數 / 失敗數 / 修正輪次
-    Skill->>Hook: PostToolUse
-    Hook-->>Skill: ⏱ Executor 完成（耗時 M 分 S 秒）
 
-    Note over Skill,Hook: 委派 Reviewer
-    Skill->>Hook: PreToolUse
-    Hook-->>Skill: ⏱ Reviewer 開始：HH:MM:SS
+    Note over Skill,RV: 委派 Reviewer
     Skill->>RV: Agent(dotnet-testing-reviewer, 測試檔案路徑 + 三個交接檔案路徑)
     RV-->>Skill: 評分 + issues + 改善建議
-    Skill->>Hook: PostToolUse
-    Hook-->>Skill: ⏱ Reviewer 完成（耗時 M 分 S 秒）
 
     Skill->>Skill: Phase 5：清理 executor-result/ 暫存
-    Skill->>Main: 整合結果 + 各階段耗時表格
+    Skill->>Skill: node token_usage.js report（Token 表 + 各階段耗時）
+    Skill->>Main: 整合結果 + Token 表 + 各階段耗時表格
     Main->>Dev: 呈現結果
 ```
 
@@ -234,7 +199,7 @@ sequenceDiagram
 |---------|------|------|
 | Orchestrator 載體 | Skill（非 Agent） | Skill 在主對話中執行，才能透過 Agent tool 委派 Subagent；若定義為 Agent 則身處子對話，無法再對外委派 |
 | 執行權限 | `bypassPermissions: true` | 避免每次 `dotnet build` / `dotnet test` 需要手動確認，確保工作流程自動推進 |
-| 計時機制 | Hook（非 Bash date） | 與 Orchestrator 指令解耦，不佔用 Subagent 的 context；Hook 未安裝時流程仍可正常執行 |
+| 計時機制 | `token_usage.js report`（非 Bash date、非 Hook） | 耗時取自各 subagent transcript 的時間窗，與 Token 用量同一份輸出；不佔用 Subagent 的 context |
 | 大型類別處理 | 單一 Writer | 一個被測類別固定一個 Writer、一個測試檔案。早期版本會在方法數 > 5 或情境數 > 20 時拆為兩個平行 Writer，因平行 Writer 無法協調、跨檔寫法必然漂移而移除 |
 | 技能載入方式 | 動態載入 Agent Skills | Analyzer 依分析結果決定 Writer 需要哪些技能（AutoFixture / NSubstitute / AwesomeAssertions 等），按需載入，避免無謂的 context 佔用 |
 | 交接機制 | JSON 檔案（.orchestrator/） | Subagent 間透過 `.orchestrator/analysis/*.analysis.json` 傳遞結構化資料，而非在 prompt 中嵌入完整內容，保持每個 Subagent 的 prompt 精簡 |

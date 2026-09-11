@@ -106,6 +106,7 @@ Writer 禁止使用 `WebApplicationFactory` 或 Testcontainers 程式化容器�
 - 執行 `dotnet test`，啟動完整分散式應用環境（AppHost 管理的所有容器）
 - 若有測試失敗，進行最多 5 輪的錯誤修正迴圈
 - 使用長超時設定（10 分鐘以上），因為 AppHost 啟動多個容器需要較長時間
+- **不修改 `src/`（含 AppHost）**：根因在生產程式碼時保留測試失敗、記入 `productionObservations[]`（`file`、`location`、`issue`、`options[]`），由使用者決定
 
 ### Phase 4 Reviewer（可選）
 

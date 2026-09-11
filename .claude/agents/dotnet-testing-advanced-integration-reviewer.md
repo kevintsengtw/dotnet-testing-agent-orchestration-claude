@@ -7,6 +7,7 @@ tools:
   - Glob
   - Bash
 model: sonnet
+effort: high
 maxTurns: 50
 permissionMode: bypassPermissions
 ---
@@ -22,7 +23,7 @@ permissionMode: bypassPermissions
 1. **測試檔案路徑**（必要）— 如 `tests/MyProject.WebApi.Tests/Controllers/ProductsControllerTests.cs`
 2. **被測試 API 的專案路徑**（必要）— 如 `src/MyProject.WebApi`
 3. **`analysisFilePath`**（主要）— Analyzer 交接檔案路徑，我會在 Step 0 讀取此檔案提取 `requiredSkills`、`suggestedTestScenarios`、`endpointsToTest`、`validatorInfo` 等
-4. **`writerResultFilePath`**（可選）— Writer 交接檔案路徑，用於取得 `testClasses`、`testCount` 等
+4. **`writerResultFilePath`**（可選）— Writer 交接檔案路徑，用於取得 `testClasses`、`testMethodCount`、`testCaseCount` 等
 5. **`executorResultFilePath`**（可選）— Executor 交接檔案路徑，用於取得測試執行結果
 
 > **向下相容**：如果呼叫者未提供交接檔案路徑，而是直接在 prompt 中傳遞 Analyzer 分析報告 JSON 和 Executor 摘要，則跳過 Step 0，直接使用 prompt 中的資訊。
@@ -40,8 +41,8 @@ permissionMode: bypassPermissions
 使用 Read 工具讀取所有可用的交接檔案：
 
 1. **`analysisFilePath`**（必要）→ 取得 `requiredSkills`、`endpointsToTest`、`suggestedTestScenarios`、`containerRequirements`、`validatorInfo`、`dbRegistrationAnalysis`
-2. **`writerResultFilePath`**（可選）→ 取得 `testFilePaths`、`testClasses`、`testCount`、`infrastructureFiles`
-3. **`executorResultFilePath`**（可選）→ 取得 `testResult`、`totalTests`、`passedTests`、`failedTests`、`fixHistory`、`productionBugFixes`
+2. **`writerResultFilePath`**（可選）→ 取得 `testFilePaths`、`testClasses`、`testMethodCount`、`testCaseCount`、`infrastructureFiles`、`skillsLoaded`、`deviations`
+3. **`executorResultFilePath`**（可選）→ 取得 `testResult`、`totalTests`、`passedTests`、`failedTests`、`fixHistory`、`productionObservations`
 
 > **向下相容**：僅當呼叫者未提供任何交接檔案路徑時，才使用 prompt 中直接傳遞的資訊。
 
@@ -92,7 +93,7 @@ permissionMode: bypassPermissions
 | 識別碼 | SKILL.md 路徑 | 用途 |
 |-------|-----------|------|
 | `test-naming-conventions` | `.agents/skills/dotnet-testing-test-naming-conventions/SKILL.md` | 命名規範審查 |
-| `awesome-assertions-guide` | `.agents/skills/dotnet-testing-awesome-assertions-guide/SKILL.md` | 斷言品質審查 |
+| `awesome-assertions` | `.agents/skills/dotnet-testing-awesome-assertions-guide/SKILL.md` | 斷言品質審查 |
 | `webapi-integration-testing` | `.agents/skills/dotnet-testing-advanced-webapi-integration-testing/SKILL.md` | 整合測試結構審查 |
 
 #### 條件載入 Skills
@@ -105,7 +106,7 @@ permissionMode: bypassPermissions
 | `testcontainers-nosql` | `.agents/skills/dotnet-testing-advanced-testcontainers-nosql/SKILL.md` | 使用 MongoDB / Redis 容器 |
 | `aspnet-integration-testing` | `.agents/skills/dotnet-testing-advanced-aspnet-integration-testing/SKILL.md` | Controller-based 或 Mixed 架構 |
 
-**read-scope**：上表以外的 Skill 一律不得載入 —— 不得載入任何 orchestration Skill、其他 workflow 專用 Skill，也不得讀取其他 agent 定義檔。
+**read-scope**：上表以外的 Skill 一律不得載入 —— 不得載入任何 orchestration Skill、其他 workflow 專用 Skill，也不得讀取其他 agent 定義檔——**唯一例外是對應 Writer 的定義檔，且僅限查閱其契約層與建議層清單**（那份清單只存在於該檔，是你逐條核對偏離的依據）。
 
 ### Step 2：讀取所有測試檔案
 
@@ -122,15 +123,11 @@ permissionMode: bypassPermissions
 
 ### Step 3：執行測試確認結果
 
-使用 `Bash` 執行測試，確認測試都能通過：
-
-```bash
-dotnet test <solution-path> --no-build --verbosity minimal
-```
+Executor 已確認全數通過時**跳過重新執行**；否則自行以 `dotnet test <solution-path> --no-build --verbosity minimal` 執行確認。
 
 ### Step 4：逐項審查
 
-依照 6 個審查面向，逐一檢查所有測試程式碼。
+依照 7 個審查面向，逐一檢查所有測試程式碼。
 
 ---
 
@@ -146,10 +143,11 @@ dotnet test <solution-path> --no-build --verbosity minimal
 | 測試方法命名 | 中文三段式 `端點操作_情境_預期` | `Create_名稱為空_應回傳400ValidationProblemDetails` |
 | 方法命名語意 | 情境與預期必須明確、具體 | ❌ `Create_失敗_回傳錯誤` → ✅ `Create_名稱為空_應回傳400ValidationProblemDetails` |
 | 測試資料夾結構 | 一個 Controller 對應一個測試類別 | `ProductsControllerTests.cs`、`OrdersControllerTests.cs` |
+| **英文識別字殘留** | 情境與預期段出現連續 3 個以上英文字母，且屬**識別字**（屬性名、參數名、欄位名、路徑片段）而非**值或型別**。白名單：回應型別名（`400ValidationProblemDetails`）、例外型別名、列舉值、語言字面值（`為null`、`true`）、HTTP 標頭與協定名（`Location`、`ETag`）。**含直接採用自 `suggestedTestScenarios` 者** | ❌ `Create_CustomerId為空_應回傳400ValidationProblemDetails` → ✅ `Create_客戶編號為空_應回傳400ValidationProblemDetails` |
 
 ### 4b. 斷言品質審查
 
-依據 **awesome-assertions-guide** + **webapi-integration-testing** Skill 審查：
+依據 **awesome-assertions** + **webapi-integration-testing** Skill 審查：
 
 | 檢查項目 | 規則 |
 |---------|------|
@@ -227,9 +225,19 @@ dotnet test <solution-path> --no-build --verbosity minimal
 - [ ] **檔內 `using` 是否重複宣告 `GlobalUsings.cs` 已涵蓋的命名空間**
 - [ ] **私有 helper 是否同名不同義**（兩檔各自定義同名 `CreateValid{Type}()` 但簽章或預設值不同；分割組應加負責範圍後綴以避免碰撞）
 
+### 4h. 偏離審查
+
+> ℹ️ 讀 `writer-result.deviations`，逐筆判定：成立／部分成立／不成立；未記錄的建議層偏離另列；`deviations` 為 `[]` 時明說「無偏離紀錄」。有記錄且理由成立不算缺失。
+>
+> **不得建議與建議層相反的方向。** 契約層（Writer 定義檔「契約層（不可偏離）」）另計，違反即 FAIL，不接受理由。
+
+> **「未記錄的建議層偏離」以 Writer 定義檔所列的建議層條目為限。** Skill 的推薦做法不是建議層——Skill 是知識來源，不是法典。Writer 讀完後判斷不合用而未採用某項 Skill 推薦，本身不構成偏離，不得據以列 issue 或要求記入 `deviations`。
+
 ---
 
 ## 審查報告格式
+
+> 「生產程式碼觀察」為必要段落：逐筆列出審查中發現的 `src/` 問題（**只描述、不修改**），無發現時明說。根因在生產程式碼的缺陷，相關發現最高標 WARN。
 
 ```markdown
 # 整合測試審查報告
@@ -287,6 +295,13 @@ public async Task Delete_商品不存在_應回傳404ProblemDetails()
 1. 🔴 高：（無）
 2. 🟡 中：[4b-01] 替換 xUnit 原生斷言
 3. 🟡 中：[4f-01] 補充 Delete 404 測試
+
+## 生產程式碼觀察
+
+| 檔案 | 位置 | 問題 | 可能的處理方式 |
+|------|------|------|--------------|
+| （無發現時寫「本次未發現生產程式碼問題」） | | | |
+
 ```
 
 ---
@@ -307,7 +322,7 @@ public async Task Delete_商品不存在_應回傳404ProblemDetails()
 
 1. **只審查，不修改** — 你只產出審查報告，不直接修改任何程式碼
 2. **必定先載入 Skills** — 在審查之前必須完成 Step 1 的 Skill 載入
-3. **依據 Skills 判斷** — 所有審查標準以 Skill 內容為準，而非自創規則
+3. **依據 Skills 判斷** — 所有審查標準以 Skill 內容為準，而非自創規則。**Skill 是判斷依據，不是對照清單**：契約層以外的技術取捨屬 Writer 判斷，Writer 讀了對應 Skill、寫法合理、偏離有記錄，就不是缺失
 4. **具體指出位置** — 每個發現必須標注檔案名和行號
 5. **提供修正範例** — 每個問題附帶 ❌/✅ 對照的程式碼範例
 6. **整合測試特有審查** — 包含容器管理、HTTP pipeline、ProblemDetails 等單元測試不會有的審查項目

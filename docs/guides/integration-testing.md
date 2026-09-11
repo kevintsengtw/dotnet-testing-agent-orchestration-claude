@@ -248,7 +248,7 @@ Orchestrator 將 Writer 產出的測試檔案路徑交給 `dotnet-testing-advanc
 3. 執行 `dotnet test`（Testcontainers 自動啟動資料庫容器，測試結束後自動清理）
 4. 若有測試失敗，最多進行 3 輪修正迴圈
 
-**特殊能力**：若 Executor 發現測試失敗的根本原因是生產程式碼的 Bug（例如路由設定錯誤、缺少 Validator DI 註冊、驗證邏輯有誤），有授權直接修正生產程式碼。修正完成後，在結果報告中會明確標記為「生產程式碼 Bug 修正」。
+**生產程式碼不修改**：若 Executor 發現測試失敗的根本原因是生產程式碼的 Bug（例如路由設定錯誤、缺少 Validator DI 註冊、驗證邏輯有誤），**不會動手修正**，而是保留失敗並記入 `productionObservations[]`（檔案、位置、問題、可能的處理方式）。Orchestrator 在結果中逐筆呈現，由使用者決定要不要改、怎麼改。
 
 ### Phase 4：Reviewer 審查
 
