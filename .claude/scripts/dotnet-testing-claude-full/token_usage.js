@@ -28,7 +28,7 @@ const path = require("path");
 const os = require("os");
 const crypto = require("crypto");
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3; // 3：usage 以 message.id + requestId 去重（≤2 的 ledger 列未去重，含快取 input 約 2×，不可直接比較）
 const SUBAGENT_PREFIX = "dotnet-testing-"; // 只計 orchestrator 的 subagent，排除 Explore / general-purpose
 const CLEANUP_MARKERS = ["cleanup", "清理"]; // 描述含這些字的 subagent 視為清理任務，不計入用量
 const ROLE_ORDER = ["orchestrator", "analyzer", "writer", "executor", "reviewer"];
@@ -121,6 +121,8 @@ class Bucket {
   constructor() {
     this.pure_input = 0;
     this.cache_write = 0;
+    this.cache_write_5m = 0; // usage.cache_creation.ephemeral_5m_input_tokens（缺欄以 0 計）
+    this.cache_write_1h = 0; // usage.cache_creation.ephemeral_1h_input_tokens（寫入單價與 5m 不同）
     this.cache_read = 0;
     this.output = 0;
     this.rows = 0;
@@ -130,6 +132,9 @@ class Bucket {
   addUsage(u) {
     this.pure_input += toInt(u.input_tokens);
     this.cache_write += toInt(u.cache_creation_input_tokens);
+    const cc = u.cache_creation && typeof u.cache_creation === "object" ? u.cache_creation : {};
+    this.cache_write_5m += toInt(cc.ephemeral_5m_input_tokens);
+    this.cache_write_1h += toInt(cc.ephemeral_1h_input_tokens);
     this.cache_read += toInt(u.cache_read_input_tokens);
     this.output += toInt(u.output_tokens);
     this.rows += 1;
@@ -143,6 +148,8 @@ class Bucket {
     return {
       pure_input: this.pure_input,
       cache_write: this.cache_write,
+      cache_write_5m: this.cache_write_5m,
+      cache_write_1h: this.cache_write_1h,
       cache_read: this.cache_read,
       input_with_cache: this.input_with_cache,
       output: this.output,
@@ -155,6 +162,8 @@ class Bucket {
 function merge(dst, src) {
   dst.pure_input += src.pure_input;
   dst.cache_write += src.cache_write;
+  dst.cache_write_5m += src.cache_write_5m;
+  dst.cache_write_1h += src.cache_write_1h;
   dst.cache_read += src.cache_read;
   dst.output += src.output;
   dst.rows += src.rows;
@@ -276,6 +285,33 @@ function isUsage(u) {
   return u && typeof u === "object" && !Array.isArray(u);
 }
 
+// 去重鍵：Claude Code 會把同一則 assistant message 依 content block（thinking / text / tool_use）拆成多行
+// 寫入 transcript。實測：各行的 input／cache 欄位完全相同，output_tokens 在串流中途的行只是佔位值
+// （2～4），最後一行才是完整值。不去重會把該次 API 呼叫重複計算（含快取 input 約 2×）。
+// 口徑：message.id + requestId 相同者只計一次、**取最後一行**；無 message.id 的行（合成 fixture）逐行計。
+function usageKey(obj) {
+  const msg = obj && obj.message;
+  const id = msg && msg.id;
+  if (!id) return null;
+  return String(id) + "|" + String(obj.requestId || "");
+}
+
+// 逐行讀 usage 並去重：同鍵保留最後一行（位置維持首見順序）。
+function iterUniqueUsageLines(p) {
+  const at = {};
+  const out = [];
+  for (const obj of iterUsageLines(p)) {
+    const k = usageKey(obj);
+    if (k !== null && k in at) {
+      out[at[k]] = obj;
+      continue;
+    }
+    if (k !== null) at[k] = out.length;
+    out.push(obj);
+  }
+  return out;
+}
+
 // 以時間窗 [start, end]（Date）框定，掃主 transcript + subagents/，回傳 {scopes, models, subagents, total}。
 function aggregate(transcriptPath, start, end) {
   const scopes = {};
@@ -290,7 +326,7 @@ function aggregate(transcriptPath, start, end) {
   const inWin = (ts) => ts !== null && ts.getTime() >= st && ts.getTime() <= en;
 
   if (fs.existsSync(transcriptPath)) {
-    for (const obj of iterUsageLines(transcriptPath)) {
+    for (const obj of iterUniqueUsageLines(transcriptPath)) {
       if (obj.isSidechain) continue;
       const msg = obj.message || {};
       const u = msg.usage;
@@ -307,7 +343,7 @@ function aggregate(transcriptPath, start, end) {
     const parts = agentType.split("-");
     const role = parts[parts.length - 1] || "subagent";
     const b = new Bucket();
-    for (const obj of iterUsageLines(jsonlFile)) {
+    for (const obj of iterUniqueUsageLines(jsonlFile)) {
       const msg = obj.message || {};
       const u = msg.usage;
       if (!isUsage(u) || !inWin(parseTs(obj.timestamp))) continue;
@@ -363,7 +399,7 @@ function collectDurations(transcriptPath, st, en) {
     phases.push({ role, seconds, parallel, rows });
     totalSeconds += Math.round(seconds);
   }
-  return { phases, cleanups, totalSeconds };
+  return { phases, cleanups, totalSeconds, windowSeconds: Math.max(0, Math.round((en - st) / 1000)) };
 }
 
 // 同階段的任兩列 [lo, hi] 有交集即視為平行；單列一律視為平行（不影響取值）。
@@ -435,7 +471,7 @@ function loadPricing() {
     if (
       v &&
       typeof v === "object" &&
-      ["input_per_mtok", "output_per_mtok", "cache_write_per_mtok", "cache_read_per_mtok"].some(
+      ["input_per_mtok", "output_per_mtok", "cache_write_per_mtok", "cache_write_5m_per_mtok", "cache_write_1h_per_mtok", "cache_read_per_mtok"].some(
         (k) => (Number(v[k]) || 0) > 0
       )
     ) {
@@ -455,9 +491,16 @@ function costFor(models, rates) {
   for (const [name, b] of Object.entries(models)) {
     const r = rates[name];
     if (!r || typeof r !== "object") continue;
+    // cache 寫入：若設了 5m／1h 分項單價且 transcript 有分項，分別計價；否則一律用 cache_write_per_mtok。
+    const split = b.cache_write_5m + b.cache_write_1h > 0 && (Number(r.cache_write_5m_per_mtok) || Number(r.cache_write_1h_per_mtok));
+    const cacheWriteCost = split
+      ? (b.cache_write_5m / 1e6) * (Number(r.cache_write_5m_per_mtok) || Number(r.cache_write_per_mtok) || 0) +
+        (b.cache_write_1h / 1e6) * (Number(r.cache_write_1h_per_mtok) || Number(r.cache_write_per_mtok) || 0) +
+        (Math.max(0, b.cache_write - b.cache_write_5m - b.cache_write_1h) / 1e6) * (Number(r.cache_write_per_mtok) || 0)
+      : (b.cache_write / 1e6) * (Number(r.cache_write_per_mtok) || 0);
     const c =
       (b.pure_input / 1e6) * (Number(r.input_per_mtok) || 0) +
-      (b.cache_write / 1e6) * (Number(r.cache_write_per_mtok) || 0) +
+      cacheWriteCost +
       (b.cache_read / 1e6) * (Number(r.cache_read_per_mtok) || 0) +
       (b.output / 1e6) * (Number(r.output_per_mtok) || 0);
     per[name] = round4(c);
@@ -558,6 +601,9 @@ function renderDurationTable(result) {
     L.push("| " + scopeLabel(ph.role) + " | " + fmtDuration(ph.seconds) + " | " + detail + " |");
   }
   L.push("| **總計** | **" + fmtDuration(d.totalSeconds) + "** | 四階段之和 |");
+  if (typeof d.windowSeconds === "number") {
+    L.push("| **窗口全長** | **" + fmtDuration(d.windowSeconds) + "** | 計量起點 → 本次 report，含主執行緒與階段間隔 |");
+  }
   for (const c of d.cleanups) {
     L.push("| cleanup（" + scopeLabel(c.role) + "） | " + fmtDuration(c.seconds) + " | 不計入總計 |");
   }
@@ -607,12 +653,13 @@ function renderReportMd(meta, result) {
     );
   }
   L.push("", "## 分項 by 模型", "",
-    "| 模型 | 純input | cache寫入 | cache讀取 | 含快取input | output |",
-    "| --- | ---: | ---: | ---: | ---: | ---: |");
+    "| 模型 | 純input | cache寫入 | 　5m | 　1h | cache讀取 | 含快取input | output |",
+    "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
   for (const name of Object.keys(models).sort()) {
     const b = models[name];
     L.push(
       "| " + name + " | " + addCommas(b.pure_input) + " | " + addCommas(b.cache_write) + " | " +
+      addCommas(b.cache_write_5m) + " | " + addCommas(b.cache_write_1h) + " | " +
       addCommas(b.cache_read) + " | " + addCommas(b.input_with_cache) + " | " + addCommas(b.output) + " |"
     );
   }
@@ -660,6 +707,8 @@ function ledgerEntry(meta, result) {
   const bd = (b) => ({
     pure_input: b.pure_input,
     cache_write: b.cache_write,
+    cache_write_5m: b.cache_write_5m,
+    cache_write_1h: b.cache_write_1h,
     cache_read: b.cache_read,
     input_with_cache: b.input_with_cache,
     output: b.output,
@@ -690,6 +739,8 @@ function ledgerEntry(meta, result) {
     totals: {
       pure_input: total.pure_input,
       cache_write: total.cache_write,
+      cache_write_5m: total.cache_write_5m,
+      cache_write_1h: total.cache_write_1h,
       cache_read: total.cache_read,
       input_with_cache: total.input_with_cache,
       output: total.output,
@@ -935,9 +986,40 @@ function readMarker(sessionId) {
 // 子指令
 // ---------------------------------------------------------------------------
 
+// 刪除 stateDir 內超過 maxAgeDays 未更新的 marker（每 session 一個，否則永久累積）。回傳刪除數；任何錯誤靜默。
+function pruneMarkers(maxAgeDays) {
+  const days = typeof maxAgeDays === "number" ? maxAgeDays : 30;
+  const cutoff = Date.now() - days * 86400 * 1000;
+  let n = 0;
+  let names;
+  try {
+    names = fs.readdirSync(stateDir());
+  } catch (e) {
+    return 0;
+  }
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    const p = path.join(stateDir(), name);
+    try {
+      if (fs.statSync(p).mtimeMs < cutoff) {
+        fs.unlinkSync(p);
+        n += 1;
+      }
+    } catch (e) {
+      /* skip */
+    }
+  }
+  return n;
+}
+
 function cmdStart(framework) {
   const [sid, tp] = currentSession();
   if (!sid) return 0;
+  try {
+    pruneMarkers(30);
+  } catch (e) {
+    /* 鐵則：清理失敗不影響 start */
+  }
   const start = nowUtc();
   const marker = {
     run_id: newRunId(framework, start),
@@ -1159,6 +1241,28 @@ function cmdSelftest() {
     }
   }
 
+  // 去重：同 message.id + requestId 多行只計一次；無 id 逐行計；同 id 不同 requestId 分開計
+  {
+    const dtmp = fs.mkdtempSync(path.join(os.tmpdir(), "tu_dedup_"));
+    const dsid = "11111111-1111-1111-1111-111111111111";
+    const dmain = path.join(dtmp, dsid + ".jsonl");
+    const dsdir = path.join(dtmp, dsid, "subagents");
+    fs.mkdirSync(dsdir, { recursive: true });
+    const drow = (id, rid, u, sc) =>
+      JSON.stringify({ type: "assistant", isSidechain: !!sc, requestId: rid, timestamp: TS(10),
+        message: { id: id, role: "assistant", model: "claude-opus-5", usage: u } });
+    const U = { input_tokens: 100, cache_creation_input_tokens: 200, cache_read_input_tokens: 300, output_tokens: 40 };
+    const partial = (o) => Object.assign({}, U, { output_tokens: o });
+    fs.writeFileSync(dmain, [drow("A", "r1", partial(2)), drow("A", "r1", partial(2)), drow("A", "r1", U), drow("B", "r2", U), drow(undefined, undefined, U), drow(undefined, undefined, U), drow("C", "r3", U), drow("C", "r4", U)].join("\n") + "\n");
+    fs.writeFileSync(path.join(dsdir, "agent-d.meta.json"), JSON.stringify({ agentType: "dotnet-testing-writer", description: "w" }));
+    fs.writeFileSync(path.join(dsdir, "agent-d.jsonl"), [drow("S", "s1", U, true), drow("S", "s1", U, true)].join("\n") + "\n");
+    const dres = aggregate(dmain, start, end);
+    // 主：A×3→1、B→1、無 id×2→2、C(r3)/C(r4)→2 ＝ 6 筆
+    chk("去重：主 transcript 同 id+requestId 只計一次（取最後一行）、無 id 逐行、同 id 不同 requestId 分開", dres.scopes.orchestrator.pure_input === 600 && dres.scopes.orchestrator.output === 240);
+    chk("去重：subagent 同 id 多行只計一次", dres.scopes.writer.pure_input === 100 && dres.scopes.writer.output === 40);
+    try { fs.rmSync(dtmp, { recursive: true, force: true }); } catch (e) { /* skip */ }
+  }
+
   try {
     fs.rmSync(tmp, { recursive: true, force: true });
   } catch (e) {
@@ -1208,6 +1312,9 @@ function main(argv) {
 
 module.exports = {
   SCHEMA_VERSION,
+  pruneMarkers,
+  usageKey,
+  iterUniqueUsageLines,
   SUBAGENT_PREFIX,
   CLEANUP_MARKERS,
   ROLE_ORDER,

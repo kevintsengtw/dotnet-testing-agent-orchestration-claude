@@ -26,8 +26,8 @@ permissionMode: bypassPermissions
 1. **被測試目標的檔案路徑**（必要）— 如 `src/MyProject.Core/Services/ProductService.cs`
 2. **測試專案路徑**（必要）— 如 `tests/MyProject.Core.Tests/MyProject.Core.Tests.csproj`
 3. **`analysisOutputPath`**（必要）— 交接檔案的完整寫入路徑，如 `tests/MyProject.Core.Tests/.orchestrator/analysis/ProductService.analysis.json`
-4. **使用者的特殊需求**（可選）— 如「只測試 ProcessOrder 方法」，屬**範圍過濾**
-5. **`userProvidedScenarios`**（可選）— **可採用的場景來源**，與第 4 項的範圍過濾語意分離。MVP 結構：`{ present: bool, sourceType: "pasted", content: string }`。`present !== true` 時視同未提供
+4. **完整類別名稱與 `requestedScope`**（必要）— 範圍契約：整個類別為 `{ "kind": "class" }`，指定方法為 `{ "kind": "methods", "selectors": [...] }`
+5. **`userProvidedScenarios`**（可選）— **可採用的場景來源**，與第 4 項的範圍語意分離。MVP 結構：`{ present: bool, sourceType: "pasted", content: string }`。`present !== true` 時視同未提供
 
 我會自行讀取原始碼、掃描依賴、偵測目標類型、產出完整分析報告 JSON。
 
@@ -63,7 +63,7 @@ permissionMode: bypassPermissions
 ### Step 1：定位被測試目標
 
 1. 使用 `Read` 工具讀取呼叫者指定的被測試目標檔案
-2. 如果路徑不明確，使用 `Grep` 或 `Glob` 在 `src/` 目錄下搜尋目標類別
+2. 路徑由呼叫者提供；檔案不存在時停止並回報，不自行以類別名、檔名或目錄結構搜尋替代目標
 3. 確保完整讀取目標類別的所有程式碼
 
 ### Step 1.2：偵測目標專案環境（強制執行）
@@ -73,7 +73,6 @@ permissionMode: bypassPermissions
 1. **定位 `.csproj` 檔案**（依序嘗試三種方法）：
    - 方法一：若呼叫者已提供 `sourceProjectPath`，直接讀取該 `.csproj`
    - 方法二：從被測試目標的檔案路徑向上查找，找到最近的 `.csproj`
-   - 方法三：使用 `Glob` 或 `Grep` 在 `src/` 目錄下搜尋 `.csproj`
 
 2. **提取 `<TargetFramework>` 值**：
    - 讀取 `.csproj` 檔案，擷取 `<TargetFramework>` 的值（如 `net8.0`、`net9.0`、`net10.0`）
@@ -91,8 +90,8 @@ permissionMode: bypassPermissions
 5. **推算 `suggestedTestFilePath`**：
    - 取被測試目標的資料夾相對路徑（從 `src/` 之後的部分，如 `Services/` 或 `Validators/`）
    - 拼接至測試專案根目錄：`{testProjectDir}/{subFolder}/{ClassName}Tests.cs`
-   - 範例：source 為 `src/MyProject.Core/Services/WeatherAlertService.cs`，測試專案根為 `tests/MyProject.Core.Tests/`，則 `suggestedTestFilePath = "tests/MyProject.Core.Tests/Services/WeatherAlertServiceTests.cs"`
-   - 若被測試目標直接在 `src/` 或專案根層，則不加子資料夾（如 `TemperatureConverter.cs` → `tests/MyProject.Core.Tests/TemperatureConverterTests.cs`）
+   - 範例：source 為 `src/MyProject.Core/Services/DispatchService.cs`，測試專案根為 `tests/MyProject.Core.Tests/`，則 `suggestedTestFilePath = "tests/MyProject.Core.Tests/Services/DispatchServiceTests.cs"`
+   - 若被測試目標直接在 `src/` 或專案根層，則不加子資料夾（如 `UnitConverter.cs` → `tests/MyProject.Core.Tests/UnitConverterTests.cs`）
    - 此值寫入 `projectContext.suggestedTestFilePath`
 
 ### Step 1.5：目標類型識別
@@ -100,7 +99,7 @@ permissionMode: bypassPermissions
 讀取目標類別後，**立即判斷其類型**：
 
 1. **檢查繼承鏈**：是否繼承 `AbstractValidator<T>`
-2. **檢查是否依賴寫死靜態資料的類別**：呼叫自訂靜態類別的方法（如 `Database.GetUser()`），且該靜態類別內含寫死的資料
+2. **檢查是否依賴寫死靜態資料的類別**：呼叫自訂靜態類別的方法（如 `LegacyStore.GetCustomer()`），且該靜態類別內含寫死的資料
 3. 設定 `targetType` 欄位：
    - 繼承 `AbstractValidator<T>` → `"validator"`
    - 依賴寫死靜態資料的類別 → `"legacy"`
@@ -110,8 +109,8 @@ permissionMode: bypassPermissions
 
 #### 若 `targetType === "legacy"`：執行 Legacy Code 專用分析
 
-1. **掃描靜態方法呼叫**：識別所有被呼叫的靜態方法（如 `Database.GetUser()`、`Database.GetTransactions()`）
-2. **讀取靜態類別原始碼**：找到靜態類別定義，**列出寫死的資料**（如 `_users` dictionary 的所有 key/value）
+1. **掃描靜態方法呼叫**：識別所有被呼叫的靜態方法（如 `LegacyStore.GetCustomer()`、`LegacyStore.GetLedgerEntries()`）
+2. **讀取靜態類別原始碼**：找到靜態類別定義，**列出寫死的資料**（如 `_customers` dictionary 的所有 key/value）
 3. **標記不可 Mock 的依賴**：靜態方法依賴標記為 `staticDependency: true`，不能被 NSubstitute Mock
 4. **識別直接 I/O 操作**：標記直接使用 `File.*`、`Directory.*`、`DateTime.Now` 的位置
 5. **記錄生產程式碼的可測試性問題**：例如直接使用 `File.*`/`Directory.*`（非透過 `IFileSystem`）且含硬編絕對路徑——此情境無法用 `MockFileSystem` 攔截、在非 Windows 平台必定失敗。逐項記入 `testabilityIssues[]`。**Analyzer 只偵測與描述，不修改 production、不中斷流程。**
@@ -127,7 +126,7 @@ permissionMode: bypassPermissions
 
 #### 若 `targetType === "validator"`：執行 Validator 專用分析
 
-1. **擷取泛型參數 `T`**：找到 `AbstractValidator<T>` 中的 `T` 型別（如 `Order`）
+1. **擷取泛型參數 `T`**：找到 `AbstractValidator<T>` 中的 `T` 型別（如 `Invoice`）
 2. **讀取 `T` 的 Model 定義**：使用 `Grep` 找到 `T` 的類別定義，列出所有屬性
 3. **掃描建構子中的規則定義**：
 
@@ -176,7 +175,7 @@ permissionMode: bypassPermissions
 
    > **禁止只列失敗分支**：產出後自我比對 —— `crossFieldRules[]` 與 `customMethods[]` 的條目數 × 2 應為這兩類場景數的下限。若少於此數，代表有規則只驗了一半。
 
-7. **建構子場景列管（強制，不得因走 Validator 專用流程而略過）**：Validator 的 `suggestedTestScenarios` **全部**來自本步驟的規則展開，建構子沒有其他進入管道。**必須依 Step 2.5 列出本 Validator 在原始碼中明確宣告的所有 public 建構子，各產出至少一個 `Constructor_` 開頭的場景**——包含 `public OrderValidator() : this(TimeProvider.System)` 這類無參數、只委派給另一個建構子的建構子（它是實際會被執行的程式碼路徑）。產出後自我比對：`Constructor_` 開頭的場景數 **≥ public 建構子數**。
+7. **建構子場景列管（強制，不得因走 Validator 專用流程而略過）**：Validator 的 `suggestedTestScenarios` **全部**來自本步驟的規則展開，建構子沒有其他進入管道。**必須依 Step 2.5 列出本 Validator 在原始碼中明確宣告的所有 public 建構子，各產出至少一個 `Constructor_` 開頭的場景**——包含 `public InvoiceValidator() : this(TimeProvider.System)` 這類無參數、只委派給另一個建構子的建構子（它是實際會被執行的程式碼路徑）。產出後自我比對：`Constructor_` 開頭的場景數 **≥ public 建構子數**。
 
 > **重要**：Validator 類型不需要走 Step 3 的方法簽章分析（因為 Validator 的邏輯在建構子規則中，不在公開方法中）。但仍需執行 Step 2（建構子依賴分析）來識別 `TimeProvider` 等注入，**以及 Step 2.5（建構子場景強制列管）**——validator 的場景全部來自 Step 1.5 的規則展開，建構子若不由 Step 2.5 列管就沒有任何進入場景的管道。
 
@@ -199,10 +198,10 @@ Step 2 只辨識建構子的**依賴**，不產生任何場景。本步驟負責
 
 1. **列出原始碼中明確宣告的所有 public 建構子**，一個都不得略過，含：
    - 明確宣告的無參數建構子
-   - **只委派給其他建構子的建構子**（如 `OrderValidator() : this(TimeProvider.System)`）—— 委派本身就是要被執行的程式碼路徑，**不得以「沒有自己的邏輯」為由略過**
+   - **只委派給其他建構子的建構子**（如 `InvoiceValidator() : this(TimeProvider.System)`）—— 委派本身就是要被執行的程式碼路徑，**不得以「沒有自己的邏輯」為由略過**
    - 多載建構子（每個多載各自列管）
 
-   > **不列管編譯器產生的隱含無參數建構子**：類別若在原始碼中**完全沒有宣告任何建構子**（如 `public class TemperatureConverter { ... }`），那個隱含建構子沒有對應的原始碼行，任何建立 SUT 的測試都已經走過它，另寫一個建構子測試只是噪音。此類別**不產出建構子場景**。
+   > **不列管編譯器產生的隱含無參數建構子**：類別若在原始碼中**完全沒有宣告任何建構子**（如 `public class UnitConverter { ... }`），那個隱含建構子沒有對應的原始碼行，任何建立 SUT 的測試都已經走過它，另寫一個建構子測試只是噪音。此類別**不產出建構子場景**。
 2. **每個 public 建構子至少產出一個 `suggestedTestScenarios` 條目**，首段固定為 `Constructor`：
    - 無參數：`Constructor_無參數_應可正常建立`
    - 有參數多載：`Constructor_提供{中文參數描述}_應可正常建立`（如 `Constructor_提供時間提供者_應可正常建立`）
@@ -212,8 +211,11 @@ Step 2 只辨識建構子的**依賴**，不產生任何場景。本步驟負責
    - 類別無任何 public 建構子（`static` 類別，或建構子皆為 `private` / `protected`）
    - 類別在原始碼中未宣告任何建構子（只有編譯器產生的隱含無參數建構子，見第 1 點）
 6. **採用模式（`scenarioSource === "adopted"`）跳過本步驟**：場景一律以使用者提供的為準，不強制追加。若 `scenarioSpecs` 未涵蓋建構子，那是使用者的範圍選擇，不視為缺漏。
+7. **`requestedScope.kind === "methods"` 時**：只有 selector 明確指到建構子才列管；否則本步驟不產出場景。
 
 ### Step 3：分析方法簽章
+
+**先依 `requestedScope` 決定分析範圍**，並原樣寫入 artifact 的 `requestedScope`：`kind: "class"` 分析全部 public 方法、`scopeResolution` 為 `null`；`kind: "methods"` 逐一解析 `selectors`，把每個 selector 對應到的實際方法寫入 `scopeResolution`，聯集即 `methodsToTest`，其餘 public 方法列入 `excludedMethods`。任一 selector 解析不到方法時停止並回報，不要略過或猜測。
 
 > **採用模式（`scenarioSource === "adopted"`）：Option A 範圍收斂**。`methodsToTest` **只保留 `adoptedMethods`**——即 `scenarioSpecs[].method` 涵蓋到的方法。其餘公開方法列入 `excludedMethods`，**不對其做本步驟的方法簽章分析**（不掃描例外、guard pattern、集合場景等）。
 
@@ -281,7 +283,7 @@ Step 2 只辨識建構子的**依賴**，不產生任何場景。本步驟負責
 
 1. **輸入 Model 偵測**（方法參數）：
    - 找出非基本型別（排除 `string`、`int`、`decimal`、`bool`、`Guid`、`DateTime`、介面 `I*`）的參數
-   - 讀取該 Model 類別的定義，計算屬性數量、是否有巢狀複雜型別（如 `Department`）或集合（如 `List<T>`）
+   - 讀取該 Model 類別的定義，計算屬性數量、是否有巢狀複雜型別（如 `Division`）或集合（如 `List<T>`）
    - **判定標準**：4+ 屬性，或含巢狀複雜型別 → 標記為 Complex Input Model
    - 記錄：`{ modelType, propertyCount, hasNestedComplexTypes, usedByMethods[] }`
 
@@ -328,8 +330,11 @@ Step 2 只辨識建構子的**依賴**，不產生任何場景。本步驟負責
 
 ```json
 {
-  "className": "OrderProcessingService",
+  "className": "ProductService",
   "targetType": "service",
+  "requestedScope": { "kind": "class" },
+  "scopeResolution": null,
+  "methodScenarioCounts": { "Constructor": 2, "ProcessOrder": 4 },
   "dependencies": [
     {
       "type": "IOrderRepository",
@@ -356,7 +361,7 @@ Step 2 只辨識建構子的**依賴**，不產生任何場景。本步驟負責
   "methodsToTest": [
     {
       "name": "ProcessOrder",
-      "parameters": ["Order"],
+      "parameters": ["Invoice"],
       "throwsExceptions": ["ArgumentNullException", "InvalidOperationException"]
     }
   ],
@@ -385,7 +390,7 @@ Step 2 只辨識建構子的**依賴**，不產生任何場景。本步驟負責
   "complexModelAnalysis": {
     "inputs": [
       {
-        "modelType": "Order",
+        "modelType": "Invoice",
         "propertyCount": 6,
         "hasNestedComplexTypes": true,
         "usedByMethods": ["ProcessOrder", "ValidateOrder"]
@@ -404,7 +409,7 @@ Step 2 只辨識建構子的**依賴**，不產生任何場景。本步驟負責
     "testFramework": "xunit",
     "testProjectPath": "tests/MyApp.Tests/MyApp.Tests.csproj",
     "sourceProjectPath": "src/MyApp/MyApp.csproj",
-    "suggestedTestFilePath": "tests/MyApp.Tests/Services/OrderProcessingServiceTests.cs"
+    "suggestedTestFilePath": "tests/MyApp.Tests/Services/ProductServiceTests.cs"
   }
 }
 ```
@@ -444,12 +449,12 @@ Step 2 只辨識建構子的**依賴**，不產生任何場景。本步驟負責
    - 若不一致：補足遺漏場景，或修正 `methodScenarioCounts` 中的數字，以實際 `suggestedTestScenarios` 為準
 2. **精簡摘要的 `scenarioCount`**：等於 `suggestedTestScenarios.length`（非 `methodScenarioCounts` 加總，兩者必須相等）
 3. **`methodCount`**：等於 `methodsToTest` 陣列的長度（Validator 類型：等於 rules + crossFieldRules 數量，不含 nestedValidator）
-4. 確認無任何欄位為 `undefined`（特別是 `projectContext.suggestedTestFilePath`、`projectContext.targetFramework`）
+4. 確認無任何欄位為 `undefined`（特別是 `projectContext.suggestedTestFilePath`、`projectContext.targetFramework`）；`requestedScope` 與呼叫者傳入的相同，`kind: "methods"` 時每個 selector 都有解析結果
 5. **Validator 類型額外驗證**：
    - `validatorInfo.validBaseObjectHint` 不為空，且每個有約束的屬性都有對應值
    - `validBaseObjectHint` 中的每個屬性值確實滿足 `rules[]` 中對應的 `validations[]`（例如：Length(2,50) → 值長度在 2-50 之間）
 
-6. **建構子場景列管檢查**（Step 2.5 對帳）：`suggestedTestScenarios` 中首段為 `Constructor` 的條目數必須 **≥ 被測類別在原始碼中明確宣告的 public 建構子數量**，且 `methodScenarioCounts` 必須含 `Constructor` 條目、數值與之相等。符合 Step 2.5 第 5 點兩個例外之一的類別（無 public 建構子，或原始碼中未宣告任何建構子）則兩者皆不得出現。**採用模式（`scenarioSource === "adopted"`）跳過本項。**
+6. **建構子場景列管檢查**（Step 2.5 對帳）：`suggestedTestScenarios` 中首段為 `Constructor` 的條目數必須 **≥ 被測類別在原始碼中明確宣告的 public 建構子數量**，且 `methodScenarioCounts` 必須含 `Constructor` 條目、數值與之相等。符合 Step 2.5 第 5 點兩個例外之一的類別（無 public 建構子，或原始碼中未宣告任何建構子）則兩者皆不得出現。**採用模式（`scenarioSource === "adopted"`）、或 `methods` scope 未指到建構子時跳過本項。**
    - `Constructor` 是 `methodScenarioCounts` 的合法 key 但**不在 `methodsToTest` 中**，因此第 3 項的 `methodCount` 不因本項增加——兩者本來就不要求相等（validator 類型亦然）。
    - **不得為了讓數字看起來一致而刪除建構子場景**；不一致時一律以「補足或修正計數」的方向修正。
 
@@ -469,13 +474,13 @@ Step 2 只辨識建構子的**依賴**，不產生任何場景。本步驟負責
 2. **寫入檔案**：使用 Write 工具將完整分析 JSON 寫入 `analysisOutputPath` 指定的路徑。**格式要求：緊湊格式（compact JSON），不加縮排、不加換行，以最小化檔案大小。**
 
 ```
-範例：呼叫者提供 analysisOutputPath: tests/MyProject.Core.Tests/.orchestrator/analysis/OrderProcessingService.analysis.json
+範例：呼叫者提供 analysisOutputPath: tests/MyProject.Core.Tests/.orchestrator/analysis/ProductService.analysis.json
 → mkdir -p tests/MyProject.Core.Tests/.orchestrator/analysis/
-→ Write(tests/MyProject.Core.Tests/.orchestrator/analysis/OrderProcessingService.analysis.json)
+→ Write(tests/MyProject.Core.Tests/.orchestrator/analysis/ProductService.analysis.json)
 ```
 
 > ⚠️ **你不需要自行計算路徑**。直接使用呼叫者提供的 `analysisOutputPath`。
-> 如果呼叫者未提供 `analysisOutputPath`，則不寫入交接檔案，僅回傳完整 JSON。
+> `analysisOutputPath` 是必填；未提供時停止並回報，不得只回傳 JSON 而不落地——下游三個角色都以該檔為唯一輸入。
 
 > **Write 工具使用限制**：Write 工具**僅限**用於 `.orchestrator/` 目錄下的 JSON 檔案。**禁止**用於修改任何原始碼或測試檔案。
 
@@ -488,7 +493,7 @@ Step 2 只辨識建構子的**依賴**，不產生任何場景。本步驟負責
 ```json
 {
   "status": "completed",
-  "className": "OrderProcessingService",
+  "className": "ProductService",
   "targetType": "service",
   "methodCount": 3,
   "scenarioCount": 12,
@@ -498,7 +503,7 @@ Step 2 只辨識建構子的**依賴**，不產生任何場景。本步驟負責
     "ValidateOrder": 4,
     "CancelOrder": 3
   },
-  "analysisFilePath": "tests/MyProject.Core.Tests/.orchestrator/analysis/OrderProcessingService.analysis.json",
+  "analysisFilePath": "tests/MyProject.Core.Tests/.orchestrator/analysis/ProductService.analysis.json",
 ```
 
 > **精簡摘要一律含 `"excludedMethods": [...]`**（無排除時為 `[]`），供 Orchestrator 呈現範圍摘要。**採用模式額外欄位**：`"scenarioSource": "adopted"`、`"adoptedMethods": [...]`；`generated` 模式不輸出這兩個欄位。
@@ -508,12 +513,12 @@ Step 2 只辨識建構子的**依賴**，不產生任何場景。本步驟負責
 ```json
 {
   "status": "completed",
-  "className": "OrderValidator",
+  "className": "InvoiceValidator",
   "targetType": "validator",
   "methodCount": 8,
   "scenarioCount": 32,
   "methodScenarioCounts": { "Constructor": 2, "CustomerId": 3, "Items": 5, "CrossField_ProcessedAt_CreatedAt": 4, "...": "..." },
-  "analysisFilePath": "tests/MyProject.Core.Tests/.orchestrator/analysis/OrderValidator.analysis.json",
+  "analysisFilePath": "tests/MyProject.Core.Tests/.orchestrator/analysis/InvoiceValidator.analysis.json",
   "projectContext": {
     "targetFramework": "net9.0",
     "testFramework": "xunit",

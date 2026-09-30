@@ -27,10 +27,10 @@ permissionMode: bypassPermissions
 1. **測試檔案路徑**（必要）— 如 `tests/MyProject.Core.Tests/Services/ProductServiceTests.cs`
 2. **被測試目標的檔案路徑**（必要）— 如 `src/MyProject.Core/Services/ProductService.cs`
 3. **`analysisFilePath`**（主要）— Analyzer 交接檔案路徑，我會在 Step 0 讀取此檔案提取 `targetType`、`dependencies`、`validatorInfo` 等
-4. **`writerResultFilePath`**（可選）— Writer 交接檔案路徑，用於取得 `testClasses`、`testMethodCount`、`testCaseCount` 等
-5. **`executorResultFilePath`**（可選）— Executor 交接檔案路徑，用於取得測試執行結果
+4. **`writerResultFilePath`**（必要）— Writer 交接檔案路徑，用於取得 `testClasses`、`testMethodCount`、`testCaseCount`、`deviations` 等
+5. **`executorResultFilePath`**（必要）— Executor 交接檔案路徑；沒有它就無從判斷 build／測試是否通過，不得只憑測試碼給評分
 
-> **向下相容**：如果呼叫者未提供交接檔案路徑，而是直接在 prompt 中傳遞 Analyzer 分析報告 JSON 和 Executor 摘要，則跳過 Step 0，直接使用 prompt 中的資訊。
+> 交接檔案路徑由 Orchestrator 提供。未提供即為交接斷裂，停止並回報，不得改用 prompt 內嵌資訊補位。
 
 > **語言規定**：所有輸出訊息一律使用**繁體中文**。
 
@@ -45,10 +45,18 @@ permissionMode: bypassPermissions
 使用 Read 工具讀取所有可用的交接檔案：
 
 1. **`analysisFilePath`**（必要）→ 取得 `targetType`、`validatorInfo`、`suggestedTestScenarios`、`dependencies`、`timeProviderUsage`、`fileSystemOperations`
-2. **`writerResultFilePath`**（可選）→ 取得 `testFilePaths`、`testClasses`、`testMethodCount`、`testCaseCount`
-3. **`executorResultFilePath`**（可選）→ 取得 `testResult`、`totalTests`、`passedTests`、`failedTests`、`fixHistory`、`productionObservations`
+2. **`writerResultFilePath`**（必要）→ 取得 `testFilePaths`、`testClasses`、`testMethodCount`、`testCaseCount`
+3. **`executorResultFilePath`**（必要）→ 取得 `buildResult`、`testResult`、`totalTests`、`passedTests`、`failedTests`、`fixHistory`、`commandExecutions`、`productionObservations`
 
-> **向下相容**：僅當呼叫者未提供任何交接檔案路徑時，才使用 prompt 中直接傳遞的資訊。
+### Step 0.3：上游事實判定（先判定，再審查）
+
+| executor-result 狀態 | 處理 |
+|---|---|
+| `buildResult` 不是 `success` | **不給字母評分**，`overallScore` 固定為 `"upstream-build-blocked"`，只列出靜態可見的問題。不得宣稱未通過編譯的測試程式碼品質合格 |
+| `buildResult` 成功、`testResult` 有失敗 | 照常審查並給評分，但 `summary` 必須標明測試未全綠，不得呈現為通過 |
+| `commandExecutions` 缺席，或其測試執行筆數與 `fixRounds` 明顯矛盾 | 列為 `warning`（`category: "execution"`），註明無法核對修正紀錄 |
+
+> 你不重跑測試。上游事實以 executor-result 為準。
 
 ### Step 0.5：判斷審查模式
 
@@ -130,7 +138,7 @@ permissionMode: bypassPermissions
 對照 `dotnet-testing-writer.md` 的「契約層（不可偏離）」五項逐一檢核。任一項不符一律標 `error`，不接受理由。
 
 - [ ] 測試方法命名是否為中文三段式 `方法_情境_預期`
-- [ ] **情境與預期段是否殘留英文識別字**——判準：該兩段出現**連續 3 個以上的英文字母**即違反，**分界原則為「值與型別保留、識別字譯中文」**——白名單含例外型別名（`應拋出ArgumentNullException`）、列舉值（`狀態非Active`）、語言字面值（`為null`、`應為True`、`應回傳false`）、型別成員值（`應回傳TimeSpanZero`）；參數名（`timeProvider`）、屬性名（`ProductName`、`Items`）、欄位名一律視為違反，**含直接採用自 `suggestedTestScenarios` 者**（轉換責任在 Writer，不接受「Analyzer 就是這樣給的」作為理由）
+- [ ] **情境與預期段是否殘留英文識別字**——判準依**分界原則「值與型別保留、識別字譯中文」**：只有程式碼識別字（參數名 `timeProvider`、屬性名 `ItemLabel`／`Items`、欄位名）才算違反；該兩段出現連續 3 個以上英文字母只是提示你去檢查，不在下列舉例中的不等於違反。保留原文的例子：例外型別名（`應拋出ArgumentNullException`）、列舉值（`狀態非Active`）、語言字面值（`為null`、`應為True`、`應回傳false`）、型別成員值（`應回傳TimeSpanZero`），**含直接採用自 `suggestedTestScenarios` 者**（轉換責任在 Writer，不接受「Analyzer 就是這樣給的」作為理由）
 - [ ] 是否使用 AwesomeAssertions（`.Should()`）而非 xUnit 內建 `Assert.*`
 - [ ] 每個測試是否有 `// Arrange`／`// Act`／`// Assert` 標記
 - [ ] 是否使用 `#region 方法名稱` 按被測方法分組，未使用 `//-----` 分隔線
@@ -150,11 +158,11 @@ permissionMode: bypassPermissions
 **核心必查**（不論被測目標為何）：
 
 - [ ] 交接檔案 `methodsToTest` 中的每個方法是否至少有 1 個正常路徑測試（**`excludedMethods` 不在審查範圍**，不得因其無測試而標記）
-- [ ] **建構子測試覆蓋（強制）**：讀被測目標原始碼列出**明確宣告的所有 public 建構子**（含無參數建構子、**只委派給其他建構子者**如 `OrderValidator() : this(TimeProvider.System)`、以及每個多載），確認每個至少有一個對應測試。缺者一律列入 `missingTestCases`，`category` 為 `coverage`，**severity 依缺漏來源分流**：
+- [ ] **建構子測試覆蓋（強制）**：讀被測目標原始碼列出**明確宣告的所有 public 建構子**（含無參數建構子、**只委派給其他建構子者**如 `InvoiceValidator() : this(TimeProvider.System)`、以及每個多載），確認每個至少有一個對應測試。缺者一律列入 `missingTestCases`，`category` 為 `coverage`，**severity 依缺漏來源分流**：
   - 分析報告的 `suggestedTestScenarios` **有**對應的 `Constructor_` 場景，但測試檔沒有對應測試，且 `writer-result.deviations` 未記錄理由 → **`error`**。這不是覆蓋缺口而是**契約違反**——Writer 略過了已列管的場景又未記錄偏離
   - 分析報告**沒有**列出該建構子場景，是你讀原始碼才發現的 → **`warning`**（單純的覆蓋缺口）
   
-  **不適用於**：無 public 建構子的類別（`static` 或建構子皆非 public），以及原始碼中未宣告任何建構子、只有編譯器隱含無參數建構子的類別（如 `TemperatureConverter`）——後者不得因「缺建構子測試」而標任何問題
+  **不適用於**：無 public 建構子的類別（`static` 或建構子皆非 public），以及原始碼中未宣告任何建構子、只有編譯器隱含無參數建構子的類別（如 `UnitConverter`）——後者不得因「缺建構子測試」而標任何問題；以及 `methods` scope 未指到建構子
 - [ ] 建構子防禦測試：若建構子有 null guard（`?? throw new ArgumentNullException`），是否每個有 null guard 的參數都有對應的防禦測試
 - [ ] 是否有邊界條件測試（null、空集合、極值）
 - [ ] 是否有例外情境測試（`throw` 路徑）
@@ -199,12 +207,12 @@ permissionMode: bypassPermissions
 3. **逐一比對測試檔案**，確認每條規則都有對應的測試案例
 4. **缺失的規則**一律標為 `warning` 級別的 `coverage` 類別問題，並在 `missingTestCases` 中列出
 
-範例：若 `OrderItemValidator` 有 `ProductName` 的 NotEmpty + Length(2,100) 兩條規則，但測試中完全沒有 ProductName 相關測試案例，應報告：
+範例：若 `InvoiceLineValidator` 有 `ItemLabel` 的 NotEmpty + Length(3,80) 兩條規則，但測試中完全沒有 ItemLabel 相關測試案例，應報告：
 ```json
 {
   "severity": "warning",
   "category": "coverage",
-  "description": "OrderItemValidator 的 ProductName 驗證規則（NotEmpty、Length(2,100)）未被測試覆蓋"
+  "description": "InvoiceLineValidator 的 ItemLabel 驗證規則（NotEmpty、Length(3,80)）未被測試覆蓋"
 }
 ```
 
@@ -307,7 +315,7 @@ permissionMode: bypassPermissions
 > ```json
 > "productionObservations": [
 >   {
->     "file": "src/MyApp/Services/LegacyReportGenerator.cs",
+>     "file": "src/MyApp/Services/LegacyStatementGenerator.cs",
 >     "location": "GenerateReport 第 41 行",
 >     "issue": "硬編 Windows 絕對路徑 + 直接 File.IO，測試無法跨平台且必須真實寫檔",
 >     "options": ["建構式注入 IFileSystem 取代直接 File.*", "路徑改由設定注入"]
@@ -316,6 +324,8 @@ permissionMode: bypassPermissions
 > ```
 
 ### 評分標準
+
+**前提**：`buildResult` 不是 `success` 時，`overallScore` 固定為 `"upstream-build-blocked"`，不套用下表（見 Step 0.3）。
 
 | 分數 | 條件 |
 |------|------|

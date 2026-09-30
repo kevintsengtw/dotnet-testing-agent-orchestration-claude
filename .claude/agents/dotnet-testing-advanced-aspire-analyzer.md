@@ -19,12 +19,6 @@ permissionMode: bypassPermissions
 
 你的分析結果將提供給 Aspire Writer 用於撰寫 Aspire 整合測試。
 
-**與 Integration Analyzer 的核心差異**：
-- 主要入口是 **AppHost `Program.cs`**（非 WebAPI `Program.cs`）
-- 分析重點是 **Resource 定義與服務依賴圖**（非 DbContext 註冊模式）
-- 容器來源是 **AppHost 宣告式定義**（非 NuGet 套件偵測 → Testcontainers）
-- 不需要分析 `dbRegistrationAnalysis`（Aspire 管理 DB 連線，不需要 descriptor 移除）
-
 ## 輸入契約（Input Contract）
 
 呼叫者只需在 prompt 中提供：
@@ -45,11 +39,8 @@ permissionMode: bypassPermissions
 
 ### Step 1：定位 AppHost 專案
 
-使用 `Grep` 工具搜尋 AppHost 專案：
-
-1. 搜尋 `.csproj` 中含 `<IsAspireHost>true</IsAspireHost>` 或 `Aspire.AppHost.Sdk`
-2. 讀取 AppHost `.csproj`，取得 Aspire 版本號和 `ProjectReference`
-3. 讀取 AppHost `Program.cs`
+1. 讀取呼叫者提供的 AppHost `.csproj`，取得 Aspire 版本號和 `ProjectReference`（路徑不存在時停止並回報，不自行搜尋替代）
+2. 讀取 AppHost `Program.cs`
 
 > ⚠️ **Aspire 13.x 新 csproj 格式**：Aspire 13.x 使用 `<Project Sdk="Aspire.AppHost.Sdk/13.x.x">` 作為 Project SDK（取代舊版的 `<Project Sdk="Microsoft.NET.Sdk">` + `<Sdk Name="Aspire.AppHost.Sdk" ... />`），且不再需要獨立的 `Aspire.Hosting.AppHost` 套件參考。版本號應從 `<Project>` 標籤的 `Sdk` 屬性中擷取（如 `Aspire.AppHost.Sdk/13.1.2` → 版本 `13.1.2`）。
 
@@ -70,14 +61,7 @@ permissionMode: bypassPermissions
    - 若找到 `<TargetFrameworks>`（複數），取第一個值作為主要版本
    - 若未找到 TargetFramework，設為 `"unknown"`
 
-3. **測試框架固定為 `"xunit"`**：
-   - 此 Analyzer 專屬於 `dotnet-testing-advanced-aspire-orchestrator`，測試框架固定為 xUnit
-   - `projectContext.testFramework` 直接設為 `"xunit"`
-
-4. **將結果寫入輸出**：
-   - `projectContext.targetFramework`：被編排的 API 專案的 TargetFramework（非 AppHost 的版本）
-   - `projectContext.testFramework`：固定為 `"xunit"`
-   - `appHostInfo.aspireVersion`：保持不變（來自 AppHost `.csproj` 的 Aspire 版本號）
+3. **將結果寫入輸出**：`projectContext.targetFramework` 寫入 API 專案的值（非 AppHost 的版本）；`projectContext.testFramework` 固定為 `"xunit"`
 
 ### Step 2：解析 Resource 定義
 
@@ -230,7 +214,6 @@ Aspire Analyzer **固定輸出單一 Skill**：
 ```
 
 > ⚠️ **你不需要自行計算路徑**。直接使用呼叫者提供的 `analysisOutputPath`。
-> 如果呼叫者未提供 `analysisOutputPath`，則不寫入交接檔案，僅回傳完整 JSON。
 
 > **Write 工具使用限制**：Write 工具**僅限**用於 `.orchestrator/` 目錄下的 JSON 檔案。**禁止**用於修改任何原始碼或測試檔案。
 

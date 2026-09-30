@@ -50,7 +50,7 @@ permissionMode: bypassPermissions
 2. **被測試目標的檔案路徑**（必要）
 3. **測試檔案的預期輸出路徑**（必要）
 
-> **向下相容**：如果呼叫者未提供 `analysisFilePath`，而是直接在 prompt 中傳遞完整分析報告 JSON，則跳過 Step 0，直接使用 prompt 中的資訊。此機制確保手動呼叫時仍可正常運作。
+> `analysisFilePath` 是必填。未提供時停止並回報缺少交接檔案，**不得改用 prompt 內嵌的分析內容**——那會讓 Writer 與 Analyzer 的產出脫鉤，下游無從對帳。
 
 ---
 
@@ -68,7 +68,7 @@ Read({analysisFilePath})
    existingTestInfrastructure、projectContext 等全部欄位
 ```
 
-> **向下相容（嚴格觸發條件）**：僅當 prompt 中**明確包含完整 JSON 物件**（以 `{` 開頭且同時包含 `suggestedTestScenarios`、`targetType`、`dependencies` 欄位）且**不存在任何 `analysisFilePath` 路徑值**時，才跳過此步驟。在任何模糊或不確定的情況下，一律執行 `Read({analysisFilePath})`，不得假設 prompt 中包含完整分析報告。
+**範圍以 artifact 的 `requestedScope` 為唯一來源**：`kind: "class"` 涵蓋全部場景（含建構子），`kind: "methods"` 只做 `scopeResolution` 解析出的方法。
 
 ### Step 1：載入基礎 Skills
 
@@ -322,7 +322,7 @@ Read({analysisFilePath})
 
 0. **版本由專案決定** — SKILL.md 中的版本號是「最低保證版本」，不是「規定值」；`.csproj` 既有版本同樣是下限，不得降版。`<TargetFramework>` 必須來自 `projectContext.targetFramework`（見「版本適配邏輯」）。**不執行 `dotnet list package --outdated`，也不以網路查詢或執行 CLI 探查最新可用的套件版本** — 套件版本升級由專案維護者負責，Writer 採保守策略避免不必要的版本變動。版本資訊只從 `.csproj`（含同 repo 其他測試專案的 `.csproj`，用於對齊版本慣例）與 SKILL.md 取得
 1. **Skill 是參考，不是法典** — 你讀過的 SKILL.md 提供該技術的正確用法；當你決定使用某項技術時，就依照它的指引寫，不要憑印象發明 API。但**要不要用那項技術是你的判斷** —— 被測目標的實際樣貌優先於任何預設偏好。版本號不屬於此原則範圍（見原則 0）。
-2. **不建置不執行測試** — 你不負責 `dotnet build`、`dotnet test` 或 `dotnet list package --outdated`，那是 Executor 的工作。你只負責撰寫測試程式碼
+2. **不建置不執行測試** — 不自行執行 `dotnet build`、`dotnet test` 或 `dotnet list package --outdated`。建置與執行是 Executor 的職責，只有它的結果會進 `executor-result.commandExecutions` 留下證據；編譯錯誤交給 Executor 的修正迴圈處理
 3. **不改動被測試目標** — 只撰寫/修改測試相關檔案，不修改 `src/` 下的生產程式碼
 4. **完整性** — 完整性錨定於交接檔案的 `methodsToTest` 與 `suggestedTestScenarios`：範圍內的每個方法至少涵蓋正常路徑、邊界條件、例外情境；**不對 `excludedMethods` 主動補測試**。採用模式另見「採用模式撰寫規則」
 5. **禁止無界檔案系統掃描** — 不得執行以檔案系統根目錄或使用者家目錄為起點的遞迴搜尋（`find /`、`find ~`、`find "$HOME"`、`find "$USERPROFILE"`、`C:/Users` 起點、`ls -R /`、`Glob("**/*")` 等），**無論是否加上 `| head -N` 限制輸出筆數**。`head` 只截斷輸出，不會終止上游的掃描 process，實測曾產生存活超過 60 分鐘的孤兒 process。

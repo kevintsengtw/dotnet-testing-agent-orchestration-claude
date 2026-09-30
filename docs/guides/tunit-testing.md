@@ -136,7 +136,7 @@ practice_tunit/
 | Phase | 目標類別 | 學習重點 |
 |-------|---------|---------|
 | P3-1 | `BookCatalog` | `[Test]` + `[Arguments]` 純函式測試 |
-| P3-2 | `LibraryMemberService` | Mock、`[MethodDataSource]`、`[Matrix]` |
+| P3-2 | `LibraryMemberService` | Mock、`[MethodDataSource]`（含多維組合；範例專案為 TUnit 0.6.123，沒有 `[Matrix]`） |
 | P3-3 | `LoanService` | 狀態轉換（借閱/歸還/續借）、`dotnet run` 執行驗證 |
 | P3-4 | `ReservationService` | TimeProvider、Reviewer 合規性審查 |
 | P3-5 | `CatalogExportService` | IFileSystem、xUnit → TUnit 遷移 |
@@ -247,7 +247,7 @@ TUnit 的架構完全不同於 xUnit：
 1. **Source Generator 架構**：TUnit 透過 Roslyn Source Generator 在編譯時產生測試執行程式碼，不依賴執行期反射
 2. **OutputType = Exe**：測試專案必須是可執行檔（非 Library），因為 TUnit 的 Source Generator 會產生 `Main` 進入點
 3. **dotnet run 執行**：必須用 `dotnet run` 而非 `dotnet test` 執行測試
-4. **async-first 設計**：所有測試方法都是 `async Task`，斷言也是非同步的（`await Assert.That(...)`）
+4. **async-first 設計**：所有測試方法都是 `async Task`；斷言與單元測試相同，使用 AwesomeAssertions（`.Should()`）
 
 TUnit 測試專案的 .csproj 結構：
 
@@ -272,9 +272,10 @@ TUnit Analyzer 與單元測試 Analyzer 的差異：
 
 - 額外判斷是否需要 `[MethodDataSource]`（decimal 型別或複雜測試資料結構）
 - 評估是否是 xUnit → TUnit 遷移情境（偵測 `[Fact]`、`[Theory]`、`IDisposable` 等遷移源）
-- 判斷需要載入的 TUnit Skills 組合：`tunit-fundamentals`（必載）+ `tunit-advanced`（條件載入）
+- 記錄測試專案的 TUnit 版本（`projectContext.tunitVersion`），可用的 TUnit 功能以此為準
+- Analyzer 只描述事實（`tunitFeatureRequirements`），不指派 Skill；要不要載入 `tunit-advanced` 由 Writer 判斷
 
-| 需要載入 tunit-advanced 的情況 | 說明 |
+| Writer 通常會載入 tunit-advanced 的情況 | 說明 |
 |-------------------------------|------|
 | 有 `[MethodDataSource]` 需求 | 複雜資料驅動測試或 decimal 參數 |
 | 有 DI 整合需求 | `[ClassDataSource]`、屬性注入 |

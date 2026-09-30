@@ -1,23 +1,30 @@
 {
   "_comment": "成本估算為選用。複製本檔到 token-usage-reports/pricing.config.json 並填入單價即可啟用。單價單位為『每百萬 token (per MTok) 美元』。請以官方價目為準自行填入，本專案不寫死任何單價：https://docs.claude.com/en/docs/about-claude/pricing",
-  "_note": "rates 的 key 必須與 transcript 內的 message.model 完全一致（例如 claude-opus-4-8、claude-sonnet-4-6、claude-haiku-4-5-20251001）。未列出的模型不計成本；全部為 0 視為未設定，報告會略過成本估算。",
+  "_cache_note": "cache 寫入單價依 TTL 不同（1h 約為 5m 的 1.6 倍）。cache_write_5m_per_mtok／cache_write_1h_per_mtok 為選用：有填就依 transcript 的 cache_creation.ephemeral_5m/1h 分項計價，沒填一律用 cache_write_per_mtok。",
+  "_note": "rates 的 key 必須與 transcript 內的 message.model 完全一致（例如 claude-opus-5、claude-sonnet-5、claude-haiku-4-5-20251001；實際 id 見 token-usage-reports/latest.md 的「分項 by 模型」）。未列出的模型不計成本；全部為 0 視為未設定，報告會略過成本估算。",
   "rates": {
-    "claude-opus-4-8": {
+    "claude-opus-5": {
       "input_per_mtok": 0,
       "output_per_mtok": 0,
       "cache_write_per_mtok": 0,
+      "cache_write_5m_per_mtok": 0,
+      "cache_write_1h_per_mtok": 0,
       "cache_read_per_mtok": 0
     },
-    "claude-sonnet-4-6": {
+    "claude-sonnet-5": {
       "input_per_mtok": 0,
       "output_per_mtok": 0,
       "cache_write_per_mtok": 0,
+      "cache_write_5m_per_mtok": 0,
+      "cache_write_1h_per_mtok": 0,
       "cache_read_per_mtok": 0
     },
     "claude-haiku-4-5-20251001": {
       "input_per_mtok": 0,
       "output_per_mtok": 0,
       "cache_write_per_mtok": 0,
+      "cache_write_5m_per_mtok": 0,
+      "cache_write_1h_per_mtok": 0,
       "cache_read_per_mtok": 0
     }
   }

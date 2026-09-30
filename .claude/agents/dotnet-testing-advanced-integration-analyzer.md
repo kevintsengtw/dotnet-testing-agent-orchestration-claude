@@ -50,20 +50,13 @@ permissionMode: bypassPermissions
 
 1. **定位 `.csproj` 檔案**（Step 1 已定位，直接使用）：
    - 使用 Step 1 已找到的 WebAPI `.csproj` 檔案路徑
-   - 若 Step 1 尚未找到，從 `src/` 目錄搜尋含 `Sdk="Microsoft.NET.Sdk.Web"` 的 `.csproj`
 
 2. **提取 `<TargetFramework>` 值**：
    - 讀取 `.csproj` 檔案，擷取 `<TargetFramework>` 的值（如 `net8.0`、`net9.0`、`net10.0`）
    - 若找到 `<TargetFrameworks>`（複數），取第一個值作為主要版本
    - 若未找到 TargetFramework，設為 `"unknown"`
 
-3. **測試框架固定為 `"xunit"`**：
-   - 此 Analyzer 專屬於 `dotnet-testing-advanced-integration-orchestrator`，測試框架固定為 xUnit
-   - `projectContext.testFramework` 直接設為 `"xunit"`
-
-4. **將結果寫入輸出**：
-   - `projectContext.targetFramework`：WebAPI 專案的 TargetFramework
-   - `projectContext.testFramework`：固定為 `"xunit"`
+3. **將結果寫入輸出**：`projectContext.targetFramework` 寫入上值；`projectContext.testFramework` 固定為 `"xunit"`
 
 ### Step 1.5：偵測 API 架構類型
 
@@ -336,7 +329,7 @@ permissionMode: bypassPermissions
 3. **containerRequirements 一致性**：若 `dbRegistrationAnalysis` 偵測到資料庫，`containerRequirements` 必須包含對應容器
 4. **validatorInfo 完整性**（若有）：每個 validator 必須有 `validBaseObjectHint`，且 `validBaseObjectHint` 的屬性數量 ≥ 1
 5. **existingTestInfrastructure 已確認**：若掃描後無既有設施，`webApiFactory: null`，不要留空物件
-6. **場景命名英文識別字檢查**（重要原則 5 對帳，逐一場景名執行）：對 `suggestedTestScenarios` 的每個名稱，取第 2 段（情境）與第 3 段（預期），掃出所有**連續 3 個以上的英文字母**片段，逐一判定屬「值與型別」（回應型別名、例外型別名、列舉值、語言字面值、HTTP 標頭與協定名 → 放行）或「識別字」（屬性名、參數名、欄位名、路徑片段 → 違反）。**發現違反一律就地改為中文後才寫入交接檔案**，不得留給 Writer 轉換。
+6. **場景命名英文識別字檢查**（重要原則 3 對帳，逐一場景名執行）：對 `suggestedTestScenarios` 的每個名稱，取第 2 段（情境）與第 3 段（預期），掃出所有**連續 3 個以上的英文字母**片段，逐一判定屬「值與型別」（回應型別名、例外型別名、列舉值、語言字面值、HTTP 標頭與協定名 → 放行）或「識別字」（屬性名、參數名、欄位名、路徑片段 → 違反）。**發現違反一律就地改為中文後才寫入交接檔案**，不得留給 Writer 轉換。
 7. **驗證規則場景對帳**（Step 3.4 第 5 項）：若有 `validatorInfo`，`suggestedTestScenarios` 中預期段為 `400ValidationProblemDetails` 的條目數必須 ≥ Σ（每個 Validator 的規則數 × 使用該 Validator 的端點數）。不足即補齊，**不得為了讓數字看起來合理而刪規則**。
 
 若發現任何不一致，修正後再進入 Step 7。
@@ -363,7 +356,6 @@ permissionMode: bypassPermissions
 ```
 
 > ⚠️ **你不需要自行計算路徑**。直接使用呼叫者提供的 `analysisOutputPath`。
-> 如果呼叫者未提供 `analysisOutputPath`，則不寫入交接檔案，僅回傳完整 JSON。
 
 > **Write 工具使用限制**：Write 工具**僅限**用於 `.orchestrator/` 目錄下的 JSON 檔案。**禁止**用於修改任何原始碼或測試檔案。
 
@@ -397,16 +389,12 @@ permissionMode: bypassPermissions
 
 1. **只分析，不寫碼** — 你只產出交接檔案 + 精簡摘要回傳
 2. **以 API 端點為粒度** — 不同於單元測試的 class method 粒度，整合測試分析以 HTTP endpoint 為單位
-3. **精確偵測容器需求** — 掃描 NuGet 套件 + Program.cs 服務註冊，確定受測 WebAPI 所依賴的真正資料庫技術
-4. **結合使用者需求判斷** — 如果使用者明確要求使用某種容器（如「使用 SQL Server 容器」），即使 source 用 InMemory，也在 `containerRequirements` 中列出
-5. **中文三段式命名** — `suggestedTestScenarios` 必須使用中文三段式格式（`端點_情境_預期`），使用中文描述情境與預期結果
+3. **中文三段式命名** — `suggestedTestScenarios` 必須使用中文三段式格式（`端點_情境_預期`），使用中文描述情境與預期結果
    - **情境與預期段不得嵌入英文屬性名、參數名、欄位名或路徑片段**（如 `CheckInDate`、`CustomerId`、`Quantity`）。需指涉時一律譯為中文（入住日期、客戶編號、數量）。
    - **判準（可機械判斷，逐一場景名執行）**：取場景名的**第 2 段（情境）與第 3 段（預期）**，若出現**連續 3 個以上的英文字母**，依下列「白名單」與「違反」兩類判定。
    - **白名單（得保留原文）**：程式碼中的**值與型別** —— 回應型別名（`應回傳400ValidationProblemDetails`、`應回傳404ProblemDetails`）、例外型別名、列舉型別與列舉值（`狀態非Active`、`狀態為CheckedOut`）、語言字面值（`為null`、`應為true`）、HTTP 標頭與協定名（`Location`、`ETag`）。中文化會失去與程式碼的對應，故不視為違反。
    - **違反（必須改）**：程式碼中的**識別字** —— 屬性名（`CheckInDate` → 入住日期、`CustomerId` → 客戶編號）、參數名、欄位名、路徑片段（`{id}` → 編號）。
    - **分界原則**：程式碼中的**值與型別**保留原文，**識別字**必須譯為中文。場景名稱是 Writer 的直接輸入，**不得把英文識別字留給 Writer 轉換**——源頭殘留會一路帶到測試方法名並被 Reviewer 判為問題。
-6. **完整掃描既有基礎設施** — 測試專案中既有的 WebApiFactory、TestBase、Collection Fixture 必須被識別，避免 Writer 重複建立
-7. **介面路徑要正確** — 如果有識別到介面（如 `IValidator<T>`），提供正確的檔案路徑
-8. **requiredSkills 必須精確** — 只列出實際需要的 Skills，不要「以防萬一」全部列上
-9. **DbContext 註冊模式必須分析** — `dbRegistrationAnalysis` 是 Writer 決定 DbContext 置換策略的關鍵依據。當 `pattern` 為 `hardcoded-unconditional` 且使用者要求容器化測試（Provider 不同於原始註冊的 Provider）時，必須標記 `risk: "high"` 並建議修改 Program.cs
-10. **驗證規則一律全數列管** — 有 `validatorInfo` 時，每個 Validator 的每條規則都必須在 `suggestedTestScenarios` 有對應的 400 場景（Step 3.4 第 5 項），共用 Validator 的端點各自列。**「已有代表性驗證場景」「Writer 會補」都不是略過的理由。**
+4. **介面路徑要正確** — 如果有識別到介面（如 `IValidator<T>`），提供正確的檔案路徑
+5. **requiredSkills 必須精確** — 只列出實際需要的 Skills，不要「以防萬一」全部列上
+6. **驗證規則一律全數列管** — 有 `validatorInfo` 時，每個 Validator 的每條規則都必須在 `suggestedTestScenarios` 有對應的 400 場景（Step 3.4 第 5 項），共用 Validator 的端點各自列。**「已有代表性驗證場景」「Writer 會補」都不是略過的理由。**

@@ -306,7 +306,6 @@ Aspire Executor 的特殊行為：
 | 審查項目                   | 說明                                                |
 | -------------------------- | --------------------------------------------------- |
 | Resource 名稱對齊          | `CreateHttpClient` 的參數是否與 AppHost 宣告一致    |
-| ContainerLifetime.Session  | 容器是否設定為 Session 級別生命週期（避免重複啟動） |
 | 測試隔離                   | 是否使用 Respawn 在每個測試前重置資料庫             |
 | 狀態碼覆蓋                 | 200/201/204/400/404/409 是否都有測試                |
 | ProblemDetails 斷言        | 錯誤回應是否驗證 ProblemDetails 結構                |

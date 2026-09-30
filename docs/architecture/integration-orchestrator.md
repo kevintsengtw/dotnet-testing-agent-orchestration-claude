@@ -177,7 +177,7 @@ Container 需求由 Analyzer 在 Phase 1 分析時從 WebAPI 專案的 `.csproj`
 
 ## 6. 生產程式碼問題：只回報，不修改
 
-四階段流程**一律不修改 `src/` 下的生產程式碼**，四套工作流程的規定相同。
+四階段流程**不修改 `src/` 下的生產程式碼**。唯一例外是整合測試特有的 Writer 策略 A：`Program.cs` 無條件硬編碼 DB Provider 時，在 `AddDbContext<T>()` 外層加 `Testing` 環境條件判斷。
 
 **設計動機：**
 
@@ -235,7 +235,7 @@ Orchestrator 在呼叫各 Subagent 時只傳入交接檔案路徑與摘要數字
 
 | 錯誤情境                   | 處理方式                                                       |
 | -------------------------- | -------------------------------------------------------------- |
-| Analyzer 找不到 Controller | 向使用者確認路徑，用 Read/Grep 搜尋目標，重新啟動 Analyzer     |
+| Analyzer 找不到 Controller | 向使用者確認路徑後重新啟動 Analyzer，不自行搜尋     |
 | Docker 未啟動              | 告知使用者需啟動 Docker Desktop；若測試不涉及 Container 則繼續 |
 | Writer 回應超出 token 上限 | 強制改用分兩次啟動策略                                         |
 | Executor 3 輪後仍失敗      | 將失敗訊息傳給 Reviewer，在結果中區分環境問題與邏輯問題        |

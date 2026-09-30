@@ -27,6 +27,18 @@
 > `subagents/` 子目錄」，只計 `agentType` 以 `dotnet-testing-` 開頭的 subagent（排除 `Explore` /
 > `general-purpose`），即可精準涵蓋 Orchestrator ＋ 4 個 subagent。
 
+### 去重口徑（v1.7.3 起，`schema_version` 3）
+
+Claude Code 會把**同一則 assistant message 依 content block（thinking／text／tool_use）拆成多行**寫入
+transcript，每行都帶 `message.usage`。實測：各行的 `input_tokens`／cache 欄位完全相同；`output_tokens`
+在串流中途的行只是佔位值（2～4），最後一行才是完整值。逐行相加會把同一次 API 呼叫算 2～4 次——
+v1.7.2 以前的報告**含快取 input 約高估 2 倍、output 約 1.1 倍**。
+
+引擎以 `message.id + requestId` 為鍵去重、**同鍵取最後一行**（與 ccusage 同鍵；取最後一行是因為
+output 只有最後一行完整）。無 `message.id` 的行逐行計（合成 fixture 向後相容）。
+
+> `ledger.jsonl` 內 `schema_version ≤ 2` 的列是去重前的數字，**不可與 3 以後的列直接比較**。
+
 ## 運作方式（整合進四個 Orchestrator）
 
 四個 Orchestrator skill 在流程中呼叫引擎兩次（皆 best-effort、失敗即略過）：
@@ -66,11 +78,16 @@
 | --- | --- |
 | `token-usage-reports/latest.md` | 最近一次 run 報告 |
 | `token-usage-reports/run-<時間>-<run_id>.md` | 每次 run 各一份 |
-| `token-usage-reports/ledger.jsonl` | 累積帳本（run_id upsert，可跨次比較） |
+| `token-usage-reports/ledger.jsonl` | 累積帳本（run_id upsert，可跨次比較；`schema_version ≤ 2` 的列未去重，不可與 3 以後比較） |
 | `token-usage-reports/pricing.config.json` | 使用者自填單價（選用） |
 
-報告分區：總覽（input 三分項 + 含快取合計 + output）、分項 by scope（角色 ×次數）、分項 by 模型、
+報告分區：總覽（input 三分項 + 含快取合計 + output）、分項 by scope（角色 ×次數）、分項 by 模型（含 cache 5m／1h）、
 成本估算（選用）、subagent 明細。`token-usage-reports/` 已 gitignore。
+
+耗時表有兩個總數：**總計**＝四階段之和（各階段取同階段最長者，循序則相加）；**窗口全長**＝計量起點到本次
+`report` 的實際經過時間，含 Orchestrator 主執行緒與階段之間的間隔。兩者的差就是主執行緒自己花的時間。
+
+`.token-usage-state/` 內每個 session 一個 marker；`start` 時會順手刪除 30 天未更新的舊 marker。
 
 ## 成本估算（選用，附帶功能）
 
@@ -78,7 +95,7 @@
 
 ```powershell
 # Windows
-Copy-Item .claude\scripts\token-usage\pricing.config.example.json token-usage-reports\pricing.config.json
+Copy-Item .claude\scripts\dotnet-testing-claude-full\pricing.config.example.json token-usage-reports\pricing.config.json
 ```
 
 ```bash
@@ -87,6 +104,9 @@ cp .claude/scripts/dotnet-testing-claude-full/pricing.config.example.json token-
 ```
 
 `rates` 的 key 須與 transcript 的 `message.model` 一致；單價單位為「每百萬 token (per MTok) 美元」。
+cache 寫入依 TTL 有兩種單價（1h 約為 5m 的 1.6 倍）：`cache_write_5m_per_mtok`／`cache_write_1h_per_mtok`
+為選用，有填就依 transcript `usage.cache_creation.ephemeral_5m/1h_input_tokens` 分項計價，沒填一律用
+`cache_write_per_mtok`。完整報告的「分項 by 模型」與 ledger 都帶 5m／1h 兩欄，成本未啟用也看得到分佈。
 單價以官方價目為準自行填入：<https://docs.claude.com/en/docs/about-claude/pricing>。
 
 ## 驗證
@@ -100,7 +120,7 @@ node .claude/scripts/dotnet-testing-claude-full/token_usage.js selftest
 > 開發用更細的單元測試：`node .claude/scripts/dotnet-testing-claude-full/token_usage.test.js`。
 
 驗證：各 scope 加總、`Explore` 排除、`含快取 input = 純+寫+讀`、窗口過濾、writer×N 聚合計次、
-缺 cache 欄以 0 計、subagent-cluster 框定。
+缺 cache 欄以 0 計、subagent-cluster 框定、**同 `message.id` 多行去重且取最後一行**。
 
 ### 手動檢視最近一次（不經 Orchestrator）
 

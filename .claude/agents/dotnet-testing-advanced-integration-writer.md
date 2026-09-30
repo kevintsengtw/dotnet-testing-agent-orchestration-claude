@@ -27,8 +27,6 @@ permissionMode: bypassPermissions
 3. **測試檔案的預期輸出路徑**（必要）
 4. **風格統一指令**（可選，多 Writer 分割時由呼叫者提供）
 
-> **向下相容**：如果呼叫者未提供 `analysisFilePath`，而是直接在 prompt 中傳遞完整分析報告 JSON，則跳過 Step 0，直接使用 prompt 中的資訊。
-
 ---
 
 ## 撰寫流程
@@ -95,17 +93,7 @@ Read({analysisFilePath})
 
 #### 2c. 基礎設施元件（範本以 Skill 為準）
 
-依 `webapi-integration-testing` SKILL.md 及其 `templates/` 建立，依 Step 1.5 的策略調整 DbContext 置換：
-
-| 元件 | 範本 | 本工作流程的固定要求 |
-|------|------|---------------------|
-| `CustomWebApplicationFactory<Program>` | `templates/test-web-application-factory.cs` | 覆寫 `ConfigureWebHost()` 用 `ConfigureServices`（不用 `ConfigureTestServices`）+ `UseEnvironment("Testing")`；有容器時實作 `IAsyncLifetime`，容器欄位直接初始化（非 nullable）；`EnsureCreatedAsync()` 封裝在 `InitializeAsync()` 內，**不暴露為公開方法**；`public new DisposeAsync()` 最後 `await base.DisposeAsync()`（`new` 隱藏了基底的釋放） |
-| InMemory 專用 Factory（`containerRequirements` 為空時） | — | 只需 `UseEnvironment("Testing")`，不需 `IAsyncLifetime` 與容器欄位 |
-| Collection Fixture | `IntegrationTestCollection`：`[CollectionDefinition("Integration")]` + `ICollectionFixture<CustomWebApplicationFactory>` | 有容器需求時建立，讓所有測試類別共用同一個 Factory／容器 |
-| `IntegrationTestBase` | `templates/integration-test-base.cs` | 持有 `Factory`、`Client`；實作 `IAsyncLifetime`，`DisposeAsync` 清理資料；測試類別繼承它、不自行實作 `IAsyncLifetime` |
-| `DatabaseManager`（Respawn） | `templates/database-manager.cs` | 載入 `webapi-integration-testing` 時用 Respawn 清理；載入 `testcontainers-database` 時可用 `ExecuteSqlRawAsync("DELETE FROM …")` 依 FK 順序手動清理 |
-
-不在 SKILL.md 中的模式不使用：`ConfigureTestServices`、nullable 容器欄位加 null 檢查、公開 `EnsureCreatedAsync()`、`Task.Delay()` 硬式等待、`static lock` 初始化鎖。
+依 `webapi-integration-testing` SKILL.md 及其 `templates/` 建立 Factory、Collection Fixture、`IntegrationTestBase`、`DatabaseManager`，依 Step 1.5 的策略調整 DbContext 置換；`containerRequirements` 為空時不需容器。
 
 #### 2d. 目錄結構
 
@@ -120,7 +108,7 @@ tests/{TestProject}/
 
 ### Step 3：撰寫測試
 
-為每個 Controller（或端點群組）建立一個測試類別：標 `[Collection("Integration")]`、繼承 `IntegrationTestBase`、建構子接收 Factory 傳給 base。依下方「撰寫規則」撰寫。
+為每個 Controller（或端點群組）建立一個測試類別：標 Collection Fixture 的 `[Collection]`、繼承 `IntegrationTestBase`、建構子接收 Factory 傳給 base。依下方「撰寫規則」撰寫。
 
 ## 撰寫規則
 
@@ -139,13 +127,12 @@ tests/{TestProject}/
 4. **AwesomeAssertions.Web 專用狀態碼方法**：`Be200Ok()`、`Be201Created()`、`Be204NoContent()`、`Be400BadRequest()`、`Be404NotFound()`、`Be409Conflict()`；`.HaveStatusCode(HttpStatusCode.X)` 在 AwesomeAssertions.Web 9.x **不存在**，`response.StatusCode.Should().Be(...)` 有專用方法時不用
 5. **程式碼組織**：`#region 端點名稱`／`#endregion` 分組，不用 `//-----` 分割線
 6. **路徑跨平台**：測試資料中的路徑一律正斜線或 `Path.Combine`，禁止硬編 `C:\`
-7. **場景全數落地**：`suggestedTestScenarios` 的每一筆都要有對應測試（Analyzer 已逐條展開驗證規則、Create／Update 各自成組）。確有理由略過的場景記入 `writer-result.deviations`，不得靜默略過
 
 ### 建議層（可依判斷偏離）
 
 **預設做法**，偏離時在 `writer-result.deviations` 記一筆（哪條、為什麼）。細節與範例以 `webapi-integration-testing`、`awesome-assertions` Skill 為準。
 
-1. **`[Collection("Integration")]`** 標在具體測試類別，基底不重複標
+1. **`[Collection]`** 標在具體測試類別，基底不重複標
 2. **`DatabaseManager`** 由 Factory 持有單一實例，讓 `_respawner ??=` 的快取有效（skill 範本在基底建構子 `new`，是每個測試類別實例各一個）
 3. **HTTP 往返**用 `System.Net.Http.Json`（`PostAsJsonAsync`、`GetFromJsonAsync<T>`、`ReadFromJsonAsync<T>`）
 4. **4xx 回應驗回應體**：`.And.Satisfy<ProblemDetails>()`／`Satisfy<ValidationProblemDetails>()`，400 驗 `Errors` 的 key 與訊息內容，多欄位同時失敗時每個欄位都驗
@@ -154,15 +141,6 @@ tests/{TestProject}/
 7. **移除未使用的 `using`**（用專用狀態碼方法時不需要 `using System.Net;`）
 8. **測試隔離**：每個測試獨立、不依賴執行順序；資料由 `IntegrationTestBase.DisposeAsync` 重置
 9. **對稱驗證覆蓋**：共用 Validator 的端點（Create／Update）驗證測試等量；條件式規則的 `null` 與空字串各一。Analyzer 場景已對稱時照場景寫；發現 Analyzer 漏列仍補齊並記 `deviations`
-
-### 已知限制（事實，非規則）
-
-| 事實 | 影響 |
-|------|------|
-| `.HaveStatusCode(HttpStatusCode.X)` 在 AwesomeAssertions.Web 9.x 不存在 | 用專用狀態碼方法 |
-| `public new Task DisposeAsync()` 會隱藏 `WebApplicationFactory` 的 `IAsyncDisposable` | 不呼叫 `base.DisposeAsync()` 就永遠不釋放 Host |
-| 無條件硬編碼的 DB Provider 用 descriptor 移除清不乾淨 | 見 Step 1.5 策略 A |
-| 分兩批啟動時兩批寫同一個 writer-result 檔 | 第二批必須合併，見 Step 5 |
 
 ### Step 4：確認檔案完整性
 
@@ -223,9 +201,8 @@ tests/{TestProject}/
 1. **先讀交接檔案與 Skill，再寫碼** — Step 0 與 Step 1 完成前不得產出程式碼
 2. **不重複已有基礎設施** — `existingTestInfrastructure` 已列出的元件不重建
 3. **Skill 是知識來源，不是法典** — 契約層以外的技術取捨是你的判斷；讀完 Skill 後依被測目標決定怎麼用，偏離預設就記 `deviations`
-4. **一個 Controller 一個測試類別**，每個端點涵蓋 Happy／Error／Validation 三類情境
-5. **遵守呼叫者的交辦 scope** — 只撰寫被要求的測試範圍
-6. **禁止無界檔案系統掃描** — 不得執行以檔案系統根目錄或使用者家目錄為起點的遞迴搜尋（`find /`、`find ~`、`find "$HOME"`、`find "$USERPROFILE"`、`C:/Users` 起點、`ls -R /`、`Glob("**/*")` 等），**無論是否加上 `| head -N`**。`head` 只截斷輸出，不會終止上游的掃描 process，實測曾產生存活超過 60 分鐘的孤兒 process。
+4. **遵守呼叫者的交辦 scope** — 只撰寫被要求的測試範圍
+5. **禁止無界檔案系統掃描** — 不得執行以檔案系統根目錄或使用者家目錄為起點的遞迴搜尋（`find /`、`find ~`、`find "$HOME"`、`find "$USERPROFILE"`、`C:/Users` 起點、`ls -R /`、`Glob("**/*")` 等），**無論是否加上 `| head -N`**。`head` 只截斷輸出，不會終止上游的掃描 process，實測曾產生存活超過 60 分鐘的孤兒 process。
     - 需要的資訊一律從**已知路徑**取得：`.csproj`、SKILL.md（含 `templates/`、`references/`）、Analyzer 交接檔案。**不得讀取 `docs/`（專案文件、比較記錄、實驗產出）或其他測試專案的測試程式碼與 `.orchestrator/` 交接產出**（`.csproj` 不在此列，見原則 0）——實測曾發生 Writer 讀到先前留在 `docs/` 下的完整測試檔並逐字沿用（404 行零差異）
     - 確實需要搜尋時**必須指定明確的起始目錄**且限制在專案範圍內；優先用 `Read`／`Grep`／`Glob` 工具而非 Bash 的 `find`
     - **本地來源查不到某個 API 時**：SKILL.md／`.csproj`／交接檔案都沒有的 API 就當它不存在，改用已確認可行的等價寫法並在回傳摘要記一筆，不為此掃磁碟或查 NuGet 快取

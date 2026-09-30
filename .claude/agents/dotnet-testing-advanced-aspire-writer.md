@@ -30,8 +30,6 @@ permissionMode: bypassPermissions
 4. **測試檔案的預期輸出路徑**（必要）
 5. **風格統一指令**（可選，多 Writer 分割時由呼叫者提供）
 
-> **向下相容**：如果呼叫者未提供 `analysisFilePath`，而是直接在 prompt 中傳遞完整分析報告 JSON，則跳過 Step 0，直接使用 prompt 中的資訊。
-
 ---
 
 ## 撰寫流程
@@ -59,7 +57,7 @@ Read({analysisFilePath})
 
 ### Step 1.1：使用交接檔案中的 sourceCodeContext（效率最佳化）
 
-交接檔案已含 AppHost `Program.cs`／`.csproj`、被編排 API 的 `Program.cs`／`.csproj`、Controller／端點、Model／DTO、DbContext、Validator、測試專案 `.csproj` 與既有測試檔的完整內容，**優先使用、不重複 `Read`**。不在其中的（如 `launchSettings.json`）才自行讀取；無 `sourceCodeContext` 時（相容模式）按原流程讀檔。
+交接檔案已含 AppHost `Program.cs`／`.csproj`、被編排 API 的 `Program.cs`／`.csproj`、Controller／端點、Model／DTO、DbContext、Validator、測試專案 `.csproj` 與既有測試檔的完整內容，**優先使用、不重複 `Read`**。不在其中的（如 `launchSettings.json`）才自行讀取。
 
 ### Step 2：建立測試基礎設施
 
@@ -78,7 +76,7 @@ Read({analysisFilePath})
 
 #### 2c. 基礎設施元件（範本以 Skill 為準）
 
-依 `aspire-testing` SKILL.md 與 `templates/` 建立 `AspireAppFixture`（`IAsyncLifetime`，`DistributedApplicationTestingBuilder.CreateAsync<Projects.XxxAppHost>()`、等待服務就緒）、`AspireAppCollectionDefinition`、`IntegrationTestBase`、`DatabaseManager`（有 DB Resource 時）、`GlobalUsings.cs`（`Aspire.Hosting`、`Aspire.Hosting.Testing`、`AwesomeAssertions`、`AwesomeAssertions.Web`）。
+依 `aspire-testing` SKILL.md 與 `templates/` 建立 `AspireAppFixture`（`IAsyncLifetime`，`DistributedApplicationTestingBuilder.CreateAsync<Projects.XxxAppHost>()`、等待服務就緒）、`IntegrationTestCollection`、`IntegrationTestBase`、`DatabaseManager`（有 DB Resource 時）、`GlobalUsings.cs`（`Aspire.Hosting`、`Aspire.Hosting.Testing`、`AwesomeAssertions`、`AwesomeAssertions.Web`）。
 
 目錄結構：`Infrastructure/`（Fixture、CollectionDefinition、TestBase、DatabaseManager）與 `Integration/` 或 `Controllers/`（測試類別）。
 
@@ -104,13 +102,12 @@ Read({analysisFilePath})
 5. **AwesomeAssertions.Web 專用狀態碼方法**：`Be200Ok()`、`Be201Created()`、`Be204NoContent()`、`Be400BadRequest()`、`Be404NotFound()`、`Be409Conflict()`（AwesomeAssertions.Web 1.9.x 皆提供）；`.HaveStatusCode(HttpStatusCode.X)` 不存在，`response.StatusCode.Should().Be(...)` 有專用方法時不用
 6. **程式碼組織**：`#region 端點名稱`／`#endregion` 分組，不用 `//-----` 分割線
 7. **路徑跨平台**：測試資料中的路徑一律正斜線或 `Path.Combine`，禁止硬編 `C:\`
-8. **場景全數落地**：`suggestedTestScenarios` 的每一筆都要有對應測試（Analyzer 已逐條展開驗證規則、Create／Update 各自成組）。確有理由略過的場景記入 `writer-result.deviations`，不得靜默略過
 
 ### 建議層（可依判斷偏離）
 
 **預設做法**，偏離時在 `writer-result.deviations` 記一筆（哪條、為什麼）。細節與範例以 `aspire-testing`、`awesome-assertions` Skill 為準。
 
-1. **Fixture 就緒探測**依 `aspire-testing` SKILL.md「等待服務就緒」一節：以伺服器預設庫（PostgreSQL `postgres`、SQL Server `master`）探測，`AddDatabase()` 宣告的子資料庫由 API 啟動時建立
+1. **Fixture 就緒探測與資料庫初始化**依 `aspire-testing` SKILL.md「等待服務就緒」「資料庫初始化」兩節
 2. **`[Collection]`** 標在具體測試類別，基底不重複標；`DatabaseManager` 的持有方式見 `aspire-testing` Skill 範本
 3. **HTTP 往返**用 `System.Net.Http.Json`
 4. **4xx 回應驗回應體**：`.And.Satisfy<ProblemDetails>()`／`Satisfy<ValidationProblemDetails>()`，400 驗 `Errors` 的 key 與訊息內容
@@ -126,18 +123,6 @@ Read({analysisFilePath})
 | `ContainerLifetime.Session` 自 Aspire 9.0 起才有 | 8.x 的容器 Resource 每次測試重新啟動，時間較長 |
 | Aspire 13.1.0+ 手動 Redis 連線需 `.WithoutHttpsCertificate()` | 依 `appHostInfo.aspireVersion` 判斷 |
 | Aspire workload 未安裝但 AppHost 走 `Aspire.AppHost.Sdk`（NuGet SDK 形式） | 可執行，Executor 已知例外 |
-| `.HaveStatusCode(HttpStatusCode.X)` 不存在 | 用專用狀態碼方法 |
-
-## 嚴禁的模式
-
-| 嚴禁模式 | 說明 |
-|---------|------|
-| `WebApplicationFactory<Program>` | Aspire 使用 `DistributedApplicationTestingBuilder` |
-| `Testcontainers.MsSql` / `MsSqlContainer` | Aspire 自動管理容器 |
-| `ConfigureHttpClientDefaults` + `AddStandardResilienceHandler()` | 需額外套件，非必要 |
-| `ConfigureTestServices` / `ConfigureWebHost` | 不適用於 Aspire |
-| `new HttpClient()` | 必須使用 `app.CreateHttpClient("name")` |
-| `.HaveStatusCode(HttpStatusCode.X)` | 此方法不存在 |
 
 ### Step 4：確認檔案完整性
 

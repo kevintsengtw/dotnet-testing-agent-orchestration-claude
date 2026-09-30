@@ -187,8 +187,7 @@ dotnet-testing-xunit-project-setup/
 │   ├── dotnet-testing-orchestrator-aspire/
 │   └── dotnet-testing-orchestrator-tunit/
 └── scripts/
-    ├── skills/                                             ← Skill registry + doctor validator
-    └── token-usage/                                        ← token 用量引擎
+    └── dotnet-testing-claude-full/                         ← Skill registry + doctor validator + token 用量引擎
 
 .agents/
 └── skills/                                                 ← 共用技術 Skills 的 canonical 來源（29 個）
@@ -311,9 +310,9 @@ ls -d .agents/skills/*/ | wc -l    # 應為 29
 | Executor 修正紀錄 | 修正了哪些編譯／執行錯誤 |
 | **`.csproj` 變動** | 逐筆列出套件與版本前後；**未變動時明說「未變動」** |
 | **生產程式碼觀察** | 流程一律不修改 `src/`；發現的問題逐筆列出檔案、位置、問題與可能的處理方式，交使用者決定；**未發現時明說** |
-| 各階段耗時 | 四階段耗時表 |
-| Token 用量 | Orchestrator 與各 Subagent 的分項統計 |
-| 後置清理狀態 | 暫存交接目錄的清理結果 |
+| 各階段耗時 | 四階段耗時表：各階段耗時、四階段之和、窗口全長（含 Orchestrator 主執行緒） |
+| Token 用量 | Orchestrator 與各 Subagent 的分項統計（每次 API 呼叫計一次；input 分純 input／cache 寫入／cache 讀取） |
+| 後置清理狀態 | `.orchestrator/` 交接目錄整個刪除的結果（四套一致） |
 
 ### 為什麼把這兩項列為契約
 

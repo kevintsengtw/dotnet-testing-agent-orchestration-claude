@@ -142,7 +142,7 @@ flowchart TD
     ExecCheck -- 是 --> P4[Phase 4：Reviewer\n審查測試品質\n產出評分與建議]
 
     P4 --> ReviewCheck{有修正建議\n且使用者同意套用？}
-    ReviewCheck -- 否 --> P5[Phase 5\n清理 executor-result/ 暫存\n保留 analysis/ 供量測工具]
+    ReviewCheck -- 否 --> P5[Phase 5\n委託 Executor 清理整個 .orchestrator/]
     ReviewCheck -- 是 --> Mod[修改流程\nWriter 修改 → Executor 執行 → Reviewer 複審]
     Mod --> P5
 
@@ -185,7 +185,7 @@ sequenceDiagram
     Skill->>RV: Agent(dotnet-testing-reviewer, 測試檔案路徑 + 三個交接檔案路徑)
     RV-->>Skill: 評分 + issues + 改善建議
 
-    Skill->>Skill: Phase 5：清理 executor-result/ 暫存
+    Skill->>Executor: Phase 5：task: "cleanup" 清理 .orchestrator/
     Skill->>Skill: node token_usage.js report（Token 表 + 各階段耗時）
     Skill->>Main: 整合結果 + Token 表 + 各階段耗時表格
     Main->>Dev: 呈現結果
@@ -203,4 +203,4 @@ sequenceDiagram
 | 大型類別處理 | 單一 Writer | 一個被測類別固定一個 Writer、一個測試檔案。早期版本會在方法數 > 5 或情境數 > 20 時拆為兩個平行 Writer，因平行 Writer 無法協調、跨檔寫法必然漂移而移除 |
 | 技能載入方式 | 動態載入 Agent Skills | Analyzer 依分析結果決定 Writer 需要哪些技能（AutoFixture / NSubstitute / AwesomeAssertions 等），按需載入，避免無謂的 context 佔用 |
 | 交接機制 | JSON 檔案（.orchestrator/） | Subagent 間透過 `.orchestrator/analysis/*.analysis.json` 傳遞結構化資料，而非在 prompt 中嵌入完整內容，保持每個 Subagent 的 prompt 精簡 |
-| 清理策略 | 保留 analysis/，刪除 executor-result/ | analysis.json 供外部量測工具（benchmark-token.ps1）讀取；executor-result/ 為暫存資料，每次流程結束後清理 |
+| 清理策略 | 流程結束刪除整個 `.orchestrator/` | 四套一致：Phase 5 委託 Executor 以 `task: "cleanup"` 清理，Phase 0 只在偵測到上次殘留時才清理。交接檔是流程內的暫存資料，Token 用量另由 transcript 計算，不需要保留 |

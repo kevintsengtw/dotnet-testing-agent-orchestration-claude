@@ -53,11 +53,15 @@ Orchestrator 在啟動 Analyzer 之前，先以 Glob 檢查測試專案目錄下
 - **有殘留**：委託 Executor 以 `task: "cleanup"` 模式清理後，再進入階段 1。
 - **無殘留**：直接進入階段 1。
 
+### 範圍契約
+
+Orchestrator 依使用者指定的範圍建立一次 `requestedScope`（整個類別 `{ "kind": "class" }`，或指定方法 `{ "kind": "methods", "selectors": [...] }`），之後各階段只從交接檔讀取，不另外傳方法清單。使用者沒有提供被測試目標的檔案路徑時，Orchestrator 停下來詢問，不自行搜尋。
+
 ### Phase 1 Analyzer
 
 Analyzer 讀取被測試目標的原始碼，識別類別類型與依賴，產出結構化的分析 JSON 報告（交接檔案）。
 
-被測類別**明確宣告的每個 public 建構子**一律列成測試情境（含只委派給其他建構子的無參數建構子），有 null guard 的參數各再加一個防禦情境；`methodScenarioCounts` 因此會有 `Constructor` 條目。未宣告任何建構子、或無 public 建構子的類別不列管。
+被測類別**明確宣告的每個 public 建構子**一律列成測試情境（含只委派給其他建構子的無參數建構子），有 null guard 的參數各再加一個防禦情境；`methodScenarioCounts` 因此會有 `Constructor` 條目。未宣告任何建構子、無 public 建構子的類別，以及指定方法範圍未指到建構子時，不列管。
 
 **三種目標類別類型：**
 
@@ -76,7 +80,7 @@ Analyzer 讀取被測試目標的原始碼，識別類別類型與依賴，產�
 
 > `excludedMethods` 是下游判讀涵蓋範圍的依據：提示詞只指定部分方法時，Reviewer 的「每個公開方法至少一個正常路徑」以 `methodsToTest` 為錨，不會把範圍外的方法判為缺漏。
 
-Orchestrator 收到摘要後，使用 Glob 驗證交接檔案是否確實存在，再啟動 Writer。
+Orchestrator 讀回實體 JSON 驗證欄位（場景數與 `methodScenarioCounts` 一致、`scopeResolution` 已解析）後才啟動 Writer；Writer → Executor、Executor → Reviewer 之間同樣各驗證一次，不只採信 subagent 的回傳摘要。
 
 ### Phase 2 Writer
 
@@ -117,8 +121,10 @@ Executor 負責建置並執行測試，同時處理編譯錯誤修正。
 
 **建置策略：**
 
-- 優先建置測試專案的 `.csproj`（含所有間接依賴的 csproj 一起建置）。
-- 建置成功後執行 `dotnet test`。
+- 先 `dotnet restore --ignore-failed-sources`：還原失敗即停止並回報，不進修正迴圈。
+- 以測試專案的 `.csproj` 為單位 `dotnet build`（含所有間接依賴的 csproj），**不抑制警告**，警告代碼記入 `buildWarnings`。
+- 建置成功後執行 `dotnet test --no-build`。
+- 每道實際執行的指令與 exit code 依序記入 `commandExecutions`。
 
 **錯誤修正迴圈：**
 
@@ -135,7 +141,7 @@ Executor **不修改 `src/`**。根因在生產程式碼時保留測試失敗、
 
 ### Phase 4 Reviewer
 
-Reviewer 讀取測試程式碼與三個交接檔案（Analyzer / Writer / Executor 的結果），進行品質審查。
+Reviewer 讀取測試程式碼與三個交接檔案（Analyzer / Writer / Executor 的結果），進行品質審查。先讀 executor-result 判定前提：`buildResult` 不是 `success` 時不給評分（`upstream-build-blocked`）；測試有失敗時照常審查，但結論不得呈現為通過。
 
 **審查項目：**
 
@@ -154,13 +160,9 @@ Reviewer 回傳結果後，Orchestrator 呈現完整報告（`overallScore`、`i
 
 ### Phase 5：後置清理
 
-四階段全部完成並向使用者呈現結果後，Orchestrator 使用 Bash 清理 Executor 的暫存結果目錄：
+四階段全部完成、Token 用量表貼出後，Orchestrator 委託 Executor 以 `task: "cleanup"` 清理整個 `{testProjectDir}/.orchestrator/` 目錄，並依 Executor 回傳輸出 `✅ Phase 5 後置清理完成` 或 `⚠️ Phase 5 後置清理未完成` 狀態行，作為回覆的最後一行。與其餘三套 Orchestrator 一致。
 
-```bash
-rm -rf "{testProjectDir}/.orchestrator/executor-result/"
-```
-
-> `.orchestrator/analysis/` 目錄保留不刪，供外部量測工具（如 `benchmark-token.ps1`）讀取 analysis.json 的大小。下一次執行時，Phase 0 前置清理會處理殘留。
+> v1.7.3 以前 unit 只刪 `executor-result/`、保留 `analysis/` 給早期的量測腳本讀取；該腳本已停用，且保留會讓下一次 Phase 0 每次都偵測到殘留而多派一次清理。
 
 ---
 

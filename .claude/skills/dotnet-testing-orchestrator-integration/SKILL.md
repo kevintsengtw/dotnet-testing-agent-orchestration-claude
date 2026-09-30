@@ -94,14 +94,6 @@ Agent(subagent_type="dotnet-testing-advanced-integration-reviewer", prompt="..."
 
 ---
 
-## Prompt 精簡原則
-
-> ⚠️ **不需要在 subagent prompt 中嵌入完整分析報告 JSON**。每個 subagent 已有 Step 0 讀取交接檔案的能力。
->
-> Orchestrator prompt 只需傳：**交接檔案路徑 + 摘要數字** + 必要的控制參數。
-
----
-
 ## 核心工作流程
 
 你必須嚴格遵循以下流程：Phase 0（清理）→ 階段 1～4（核心四階段）→ Phase 5（清理）。
@@ -182,9 +174,6 @@ analysisFilePath: {analysisFilePath}
 
 **風格統一指令**（僅分兩次啟動時，第二次需加入）：
 - 延續第一批的命名風格、`using` 排列順序與 Arrange 模式
-- 物件比較統一使用 `BeEquivalentTo()` 搭配 `options => options.Excluding(...)`
-- 例外斷言統一使用 `.Throw<T>()`
-- lambda 委派宣告統一使用 `var act = () =>`
 
 **等候 Writer 回傳精簡摘要**：`testFilePaths`、`testMethodCount`、`testCaseCount`、`skillsLoaded`、`writerResultFilePath`
 
@@ -249,7 +238,7 @@ executorResultFilePath: {executorResultFilePath}
 | 動作時機 | 必輸出文字 |
 |---------|----------|
 | 啟動 Analyzer **前** | `## 階段 1：啟動分析（Analyzer）` |
-| Analyzer 回傳後 | `✅ 階段 1 完成 — 識別出 N 個方法、Y 個依賴、Z 個場景` |
+| Analyzer 回傳後 | `✅ 階段 1 完成 — 識別出 N 個端點、Z 個場景` |
 | 啟動 Writer **前** | `## 階段 2：啟動撰寫（Test Writer）` |
 | Writer 回傳後 | `✅ 階段 2 完成 — 已建立測試檔案，共 N 個測試案例` |
 | 啟動 Executor **前** | `## 階段 3：啟動執行（Test Executor）` |
@@ -268,13 +257,13 @@ executorResultFilePath: {executorResultFilePath}
 ### 必呈現的內容
 
 1. **測試檔案連結**：列出 Writer 產出的所有測試檔案路徑。**不需在 chat 中嵌入完整測試程式碼**，使用者可透過檔案路徑直接查看
-2. **執行結果摘要**：Executor 的 `dotnet test` 是否全數通過、Docker 環境狀態、容器啟動時間
-3. **品質審查摘要**：Reviewer 的 `overallScore` 和關鍵 `issues`
+2. **執行結果摘要**：Executor 的 `dotnet test` 是否全數通過、Docker 環境狀態
+3. **品質審查摘要**：Reviewer 的整體評級（⭐1～5）和關鍵 `issues`
 4. **改善建議**（如果有的話）：Reviewer 的 `missingTestCases` 和 severity=warning 以上的問題
 5. **使用的 Skills 組合**：列出 Writer 載入了哪些 Integration Skills
 6. **Executor 修正紀錄**（如果有的話）：Executor 修正了哪些編譯/執行錯誤
 7. **`.csproj` 變動**：彙整所有 Writer 回傳的 `nugetChanges` 逐筆列出（套件名 + 版本 前→後）。**即使為空也必須明說「`.csproj` 未變動」**——測試專案的套件基線被改動卻未告知，使用者無從察覺；「沒提」與「沒改」不得由使用者自行推斷
-8. **生產程式碼觀察**：呈現 Executor／Reviewer 回傳的 `productionObservations[]`（每筆含 `file`、`location`、`issue`、`options[]`）。本流程**不修改 `src/`**；有觀察時逐筆列出並**等使用者決定**，沒有時明說「未發現生產程式碼問題」。
+8. **生產程式碼觀察**：呈現 Executor／Reviewer 回傳的 `productionObservations[]`（每筆含 `file`、`location`、`issue`、`options[]`）。本流程**不修改 `src/`**（唯一例外是 Writer 策略 A 的 `Program.cs` 環境條件判斷）；有觀察時逐筆列出並**等使用者決定**，沒有時明說「未發現生產程式碼問題」。
 
 ### 📊 本次工作流程 Token 用量與各階段耗時（強制輸出，不可省略）
 
@@ -305,11 +294,13 @@ Bash 的 stdout **不會自動顯示給使用者**，必須由你親手複製貼
 
 ### 觸發條件
 
-當使用者要求套用 Reviewer 建議、修改既有測試、或增加測試案例時，使用此流程。
+當使用者要求套用 Reviewer 建議、修改既有測試、或增加測試案例時，使用此流程（而非重新執行完整四階段）。
+
+> **`productionObservations[]` 的後續**：四階段流程除 Writer 策略 A 外不改 `src/`，只回報。使用者看過觀察、**明確要求**修改 `src/` 時，才走此修改流程處理該項；未經要求不得啟動。
 
 ### 觸發方式
 
-Reviewer 回傳後，Orchestrator **一律呈現完整結果**（包含 `issues`、`missingTestCases`、`overallScore`），然後**等待使用者指示**。
+Reviewer 回傳後，Orchestrator **一律呈現完整結果**（包含 `issues`、`missingTestCases`、整體評級），然後**等待使用者指示**。
 
 **禁止自動觸發修改流程。** 無論評分高低、是否有 error 級 issue，修改流程的啟動權完全屬於使用者。
 
@@ -323,7 +314,7 @@ Orchestrator 應在結果呈現的最後，提示使用者可用的操作：
 
 1. **Writer（修改模式）** — 傳遞 Reviewer 建議內容，讓 Writer 修改既有測試程式碼
 2. **Executor** — 建置並執行修改後的測試，確認全數通過
-3. **Reviewer（re-review 模式）** — 以 `mode: "re-review"` 聚焦驗證前次建議是否正確套用
+3. **Reviewer（re-review 模式）** — 以 `mode: "re-review"` 聚焦驗證前次建議是否正確套用，並給出修改後評分
 
 ### 啟動 Writer 時的額外資訊
 
@@ -340,7 +331,7 @@ Orchestrator 應在結果呈現的最後，提示使用者可用的操作：
 
 1. 修改前後的測試數量變化（例：11 → 15）
 2. 套用了哪些 Reviewer 建議
-3. 重新評分結果（例：B+ → A）
+3. 重新評級結果（例：⭐⭐⭐⭐ → ⭐⭐⭐⭐⭐）
 
 修改流程結果呈現後，**同樣執行 token 用量統計並親手貼出表格**（規則同主路徑「強制輸出」）：先以 Bash 工具執行下列指令，再把其 stdout 的整段 Markdown 表格**一字不改貼進可見回覆**（⛔ 只跑不貼 = 未完成）；收尾提示放在表格之後。表格與收尾提示之後，**仍須執行 Phase 5 後置清理並輸出其狀態行**，該狀態行才是回覆的最後一行。
 
@@ -356,7 +347,7 @@ node .claude/scripts/dotnet-testing-claude-full/token_usage.js report integratio
 
 | 錯誤情境 | 處理方式 |
 |---------|---------|
-| **Analyzer 找不到專案** | 向使用者確認路徑，用 Read/Grep 找到目標，重新啟動 Analyzer |
+| **Analyzer 找不到專案** | 向使用者確認路徑後重新啟動 Analyzer，不自行搜尋 |
 | **Docker 未啟動** | 在結果中告知使用者需啟動 Docker Desktop；若測試不涉及容器則繼續 |
 | **Writer 回應超出長度限制** | 強制改用分兩次啟動策略（第一次基礎設施，第二次測試案例） |
 | **Executor 3 輪修正後仍失敗** | 將失敗訊息傳給 Reviewer，在結果中標示失敗，區分環境問題與邏輯問題 |
@@ -383,5 +374,3 @@ node .claude/scripts/dotnet-testing-claude-full/token_usage.js report integratio
 1. **交接檔案路徑優先** — 傳 `analysisFilePath`、`writerResultFilePath`、`executorResultFilePath`，而非嵌入 JSON。Subagent 會在 Step 0 自行讀取交接檔案
 2. **保持主 context 精簡** — 只保留 subagent 回傳的摘要，不展開中間過程
 3. **區分環境問題與邏輯問題** — Docker/容器/網路問題不算 Writer 或 Executor 的品質問題
-4. **生產 Bug 發現要標記** — 當 Executor 修正了生產程式碼，在最終結果中特別標記
-5. **`suggestedTestScenarios` 必須是中文** — 使用中文三段式格式

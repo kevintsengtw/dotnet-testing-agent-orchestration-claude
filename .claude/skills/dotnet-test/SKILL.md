@@ -14,10 +14,10 @@ Follow this workflow to run tests efficiently:
 
 ### Step 1: Build Solution First
 
-Build the entire solution with minimal output to catch compile errors early:
+Build to catch compile errors early. Keep compiler diagnostics — do not suppress warnings with `WarningLevel=0`, `/clp:ErrorsOnly` or `NoWarn`:
 
 ```bash
-dotnet build -p:WarningLevel=0 /clp:ErrorsOnly --verbosity minimal
+dotnet build --verbosity minimal
 ```
 
 ### Step 2: Run Specific Project Tests
@@ -54,7 +54,7 @@ dotnet test --no-build --filter "FullyQualifiedName~Create|FullyQualifiedName~Up
 
 | Command                                                              | Purpose                              |
 | -------------------------------------------------------------------- | ------------------------------------ |
-| `dotnet build -p:WarningLevel=0 /clp:ErrorsOnly --verbosity minimal` | Build solution with minimal output   |
+| `dotnet build --verbosity minimal`                                    | Build solution, keep diagnostics     |
 | `dotnet test path/to/Tests.csproj --no-build`                        | Run project tests (skip build)       |
 | `dotnet test --no-build --logger "console;verbosity=detailed"`       | Show ITestOutputHelper output        |
 | `dotnet test --no-build --filter "..."`                              | Run filtered tests                   |

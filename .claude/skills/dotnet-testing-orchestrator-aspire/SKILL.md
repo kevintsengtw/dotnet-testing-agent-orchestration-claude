@@ -11,14 +11,6 @@ description: >
 
 你是 .NET Aspire 整合測試的指揮中心。你的工作是**分析 AppHost 的 Resource 結構、調度、整合**，而不是自己直接撰寫測試程式碼。
 
-你管轄 1 個 Aspire 測試 Skill：`aspire-testing`。
-
-**與 Integration Orchestrator 的核心差異**：
-- 使用 `DistributedApplicationTestingBuilder`（**非** `WebApplicationFactory`）
-- 使用 `app.CreateHttpClient("servicename")`（**非** `factory.CreateClient()`）
-- 容器管理由 Aspire AppHost 宣告式處理（**非** 程式化 Testcontainers）
-- 單一 Skill（`aspire-testing`），Context Window 壓力最低
-
 > **架構說明**：此文件是 **Skill**，透過 `/dotnet-testing-orchestrator-aspire` 載入 main thread context。
 > Main thread 載入此 Skill 後，直接使用自身的 Agent tool 調度四個 subagent：
 > `dotnet-testing-advanced-aspire-analyzer`、`dotnet-testing-advanced-aspire-writer`、`dotnet-testing-advanced-aspire-executor`、`dotnet-testing-advanced-aspire-reviewer`。
@@ -250,7 +242,7 @@ writerResultFilePath: {writerResultFilePath}
 
 > **同專案多目標時**：不要把多個路徑逗號合併塞進單值欄位。改為每個目標一組完整欄位（測試檔案路徑 + `analysisFilePath` + `writerResultFilePath`），在同一個 prompt 中逐組列出，並明寫「逐個目標以 `dotnet test --filter` 對帳，各自寫一份 executor-result」。
 
-**等候 Executor 回傳精簡摘要**：`totalTests`、`passedTests`、`failedTests`、`fixRounds`、`executorResultFilePath`
+**等候 Executor 回傳精簡摘要**：`totalTests`、`passedTests`、`failedTests`、`fixRounds`、`productionObservations`、`executorResultFilePath`
 
 ### 階段 4：啟動審查（Aspire Reviewer）
 
@@ -287,7 +279,7 @@ executorResultFilePath: {executorResultFilePath}
 | 動作時機 | 必輸出文字 |
 |---------|----------|
 | 啟動 Analyzer **前** | `## 階段 1：啟動分析（Analyzer）` |
-| Analyzer 回傳後 | `✅ 階段 1 完成 — 識別出 N 個方法、Y 個依賴、Z 個場景` |
+| Analyzer 回傳後 | `✅ 階段 1 完成 — 識別出 N 個端點、Y 個 Resource、Z 個場景` |
 | 啟動 Writer **前** | `## 階段 2：啟動撰寫（Test Writer）` |
 | Writer 回傳後 | `✅ 階段 2 完成 — 已建立測試檔案，共 N 個測試案例` |
 | 啟動 Executor **前** | `## 階段 3：啟動執行（Test Executor）` |
@@ -346,6 +338,8 @@ Bash 的 stdout **不會自動顯示給使用者**，必須由你親手複製貼
 
 當使用者要求套用 Reviewer 建議、修改既有 Aspire 測試、或增加測試案例時，使用此流程（而非重新執行完整四階段）。
 
+> **`productionObservations[]` 的後續**：四階段流程一律不改 `src/`，只回報。使用者看過觀察、**明確要求**修改 `src/` 時，才走此修改流程處理該項；未經要求不得啟動。
+
 ### 流程（三階段）
 
 1. **Aspire Writer（修改模式）** — 傳遞 Reviewer 建議內容，讓 Writer 修改既有測試程式碼
@@ -374,7 +368,7 @@ Bash 的 stdout **不會自動顯示給使用者**，必須由你親手複製貼
 
 1. 修改前後的測試數量變化（例：8 → 12）
 2. 套用了哪些 Reviewer 建議
-3. 重新評分結果（例：B+ → A）
+3. 重新評級結果（例：⭐⭐⭐⭐ → ⭐⭐⭐⭐⭐）
 
 修改流程結果呈現後，**同樣執行 token 用量統計並親手貼出表格**（規則同主路徑「強制輸出」）：先以 Bash 工具執行下列指令，再把其 stdout 的整段 Markdown 表格**一字不改貼進可見回覆**（⛔ 只跑不貼 = 未完成）；收尾提示放在表格之後。表格與收尾提示之後，**仍須執行 Phase 5 後置清理並輸出其狀態行**，該狀態行才是回覆的最後一行。
 
@@ -412,9 +406,8 @@ node .claude/scripts/dotnet-testing-claude-full/token_usage.js report aspire 2>/
 
 如果 Analyzer 找不到 AppHost 專案或分析失敗：
 
-1. 向使用者確認 AppHost 專案路徑是否正確
-2. 自己嘗試用 `Grep` 工具搜尋 `<IsAspireHost>true</IsAspireHost>` 定位 AppHost 專案
-3. 重新啟動 Analyzer
+1. 向使用者確認 AppHost 專案路徑是否正確，不自行搜尋
+2. 重新啟動 Analyzer
 
 ### Docker 環境不可用
 
@@ -435,9 +428,8 @@ node .claude/scripts/dotnet-testing-claude-full/token_usage.js report aspire 2>/
 
 如果 Executor 經過 5 輪修正後仍有測試失敗：
 
-1. 將失敗訊息和 Executor 的分析一併傳給 Reviewer
-2. 在最終結果中明確標示哪些測試失敗
-3. 區分「環境問題」（Docker、容器啟動）和「程式邏輯問題」
+1. 在最終結果中明確標示哪些測試失敗
+2. 區分「環境問題」（Docker、容器啟動）和「程式邏輯問題」
 
 ---
 
@@ -467,9 +459,5 @@ node .claude/scripts/dotnet-testing-claude-full/token_usage.js report aspire 2>/
 
 1. **交接檔案路徑優先** — 傳遞 `analysisFilePath`、`writerResultFilePath`、`executorResultFilePath` 給 subagent，而非嵌入完整 JSON 或 sourceCodeContext。Subagent 會在 Step 0 自行讀取交接檔案取得完整資訊
 2. **保持主 context 精簡** — 只保留 subagent 回傳的摘要，不展開中間過程
-3. **Aspire ≠ Integration** — 絕不使用 `WebApplicationFactory`，絕不使用 Testcontainers 程式化容器
-4. **Resource 名稱一致性** — `CreateHttpClient("name")` 的名稱必須與 AppHost 中 `AddProject("name")` 一致
-5. **`requiredSkills` 固定** — Aspire Orchestrator 固定使用 `["aspire-testing"]` 單一 Skill
-6. **`suggestedTestScenarios` 必須是中文** — Analyzer 產出的建議測試命名必須使用中文三段式格式
-7. **環境檢查不可跳過** — Docker + Aspire workload 兩項環境檢查都必須在 Executor 階段完成
-8. **AppHost 啟動超時保護** — Aspire 測試需啟動多個容器，Executor 必須使用長超時設定（10 分鐘+）
+3. **Resource 名稱一致性** — `CreateHttpClient("name")` 的名稱必須與 AppHost 中 `AddProject("name")` 一致
+4. **環境檢查不可跳過** — Docker + Aspire workload 兩項環境檢查都必須在 Executor 階段完成

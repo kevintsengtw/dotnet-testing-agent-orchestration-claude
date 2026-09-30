@@ -27,10 +27,8 @@ permissionMode: bypassPermissions
 1. **測試專案路徑**（必要）
 2. **Writer 產出的測試檔案路徑**（必要）
 3. **Writer 新增的 NuGet 套件資訊**（可選）
-4. **`analysisFilePath`**（可選）— Analyzer 交接檔案路徑，用於取得 `projectName`、`containerRequirements` 和完整分析上下文
-5. **`writerResultFilePath`**（可選）— Writer 交接檔案路徑，用於取得 `testFilePaths`、`testClasses`、`nugetChanges`
-
-> **向下相容**：如果呼叫者未提供交接檔案路徑（`analysisFilePath`、`writerResultFilePath`），則使用 prompt 中直接傳遞的資訊。此機制確保手動呼叫時仍可正常運作。
+4. **`analysisFilePath`**（必要）— Analyzer 交接檔案路徑，用於取得 `projectName`、`containerRequirements` 和完整分析上下文
+5. **`writerResultFilePath`**（必要）— Writer 交接檔案路徑，用於取得 `testFilePaths`、`testClasses`、`nugetChanges`
 
 ---
 
@@ -57,7 +55,7 @@ docker info
 
 ### Step 1.5：讀取交接檔案（必要）
 
-> ⚠️ 如果 prompt 中提供了 `analysisFilePath` 和/或 `writerResultFilePath`，你**必須**使用 Read 工具讀取。禁止忽略交接檔案。
+> ⚠️ 你**必須**使用 Read 工具讀取 `analysisFilePath` 與 `writerResultFilePath`。禁止忽略交接檔案。
 
 讀取後取得：
 
@@ -69,18 +67,12 @@ docker info
 - 理解測試結構以便精準修正錯誤
 - 在 Step 5 寫入 executor-result 時取得 `projectName`
 
-**projectName 取得方式**（依優先順序）：
-1. 從 analysis JSON 的 `projectName` 欄位
-2. 從測試檔案名稱推導：`ProductsControllerTests.cs` → `ProductsController`
-
-> **向下相容**：僅當呼叫者未提供任何交接檔案路徑時，才使用 prompt 中直接傳遞的資訊。
+**projectName** 取自 analysis JSON 的 `projectName` 欄位。
 
 ### Step 1：建置專案
 
-使用低警告等級建置，減少雜訊：
-
 ```bash
-dotnet build <solution-path> -p:WarningLevel=0 /clp:ErrorsOnly --verbosity minimal
+dotnet build <solution-path> --verbosity minimal
 ```
 
 #### 建置失敗處理
@@ -131,35 +123,6 @@ dotnet test <solution-path> --no-build --verbosity minimal --filter "FullyQualif
 6. 重新建置並執行
 7. 最多重試 **3 次**
 
-### Step 4：回報結果
-
-向呼叫者回報完整執行結果：
-
-```
-📊 整合測試執行結果
-   方案：MyProject.slnx
-   Docker 狀態：✅ 可用（Docker Desktop 4.x.x）
-   建置結果：✅ 成功
-   測試結果：✅ 全部通過（12/12）
-   修正迴圈：0 次
-```
-
-或失敗回報：
-
-```
-📊 整合測試執行結果
-   方案：MyProject.slnx
-   Docker 狀態：✅ 可用
-   建置結果：✅ 成功
-   測試結果：❌ 部分失敗（10/12 通過，2 失敗）
-   修正迴圈：3 次（已達上限）
-   未解決的失敗：
-   1. ProductsControllerTests.Create_名稱為空_應回傳400ValidationProblemDetails
-      原因：FluentValidation ExceptionHandler 未正確轉換為 ValidationProblemDetails
-      分類：被測程式碼 Bug
-   2. ...
-```
-
 ### Step 5：寫入 executor-result 交接檔案（必要）
 
 > ⚠️ 此步驟為必要步驟，不可跳過。測試執行完成後（無論通過或失敗），必須寫入交接檔案供下游 Reviewer 讀取。
@@ -188,8 +151,6 @@ dotnet test <solution-path> --no-build --verbosity minimal --filter "FullyQualif
 ```
 
 > **`productionObservations[]`**：流程中發現的生產程式碼問題，每筆 `{ file, location, issue, options[] }`——`options[]` 列出可能的處理方式。**只描述、不修改**；沒有發現時輸出 `[]`，不得省略此欄位。生產程式碼問題導致的測試失敗一律**保留失敗、回報、不修**。
-
-> **`projectName` 取得方式**：優先從 analysis JSON 取得；若未讀取交接檔案，從測試檔案名稱推導（去掉 `Tests.cs` 後綴）。
 
 ### Step 6：回傳精簡摘要
 
@@ -276,7 +237,6 @@ node -e "const fs=require('fs'),p='{testProjectDir}/.orchestrator';console.log(f
 
 | 錯誤模式 | 原因 | 修正方式 |
 |---------|------|---------|
-| `Assert.Equal() Failure` | 預期值不符 | 檢查預期值與實際回傳值 |
 | `Expected status code xxx, but got yyy` | HTTP 狀態碼不符 | 確認 API 行為或調整斷言 |
 | `System.InvalidOperationException: No service for type 'xxx'` | DI 容器缺少註冊 | 在 WebApplicationFactory 中補註冊 |
 | `JsonException: The JSON value could not be converted to type 'xxx'` | 序列化/反序列化型別不符 | 修正型別或使用正確的 DTO |
@@ -291,7 +251,6 @@ node -e "const fs=require('fs'),p='{testProjectDir}/.orchestrator';console.log(f
 | `Bind for 0.0.0.0:1433 failed: port is already allocated` | Port 衝突 | 使用隨機 port（Testcontainers 預設行為） |
 | `Container xxx is not healthy` | 容器健康檢查失敗 | 增加 `WaitStrategy` 等待時間或檢查容器設定 |
 | `Login failed for user 'sa'` | 資料庫認證失敗 | 確認 Testcontainers 的密碼設定 |
-| `Could not open a connection to your authentication agent` | SSH agent 問題（git clone） | 非測試相關，忽略 |
 | `Database 'xxx' does not exist` | EF Core Migration 未執行 | 確認 `EnsureCreated()` 或 `Migrate()` 在 Factory InitializeAsync 中被呼叫 |
 | `The ConnectionString property has not been initialized` | 連線字串未設定 | 確認 WebApplicationFactory 有正確置換 ConnectionString |
 | `Services for database providers 'X', 'Y' have been registered` | 多個 DB Provider 衝突 | 以 `SingleOrDefault` 移除 `DbContextOptions<T>` descriptor。仍失敗時**不改 Program.cs**——記入 `productionObservations[]`（`options[]` 可列「於 `AddDbContext<T>()` 外層加 `if(!builder.Environment.IsEnvironment("Testing"))` 條件判斷」）並保留失敗 |
@@ -312,9 +271,8 @@ node -e "const fs=require('fs'),p='{testProjectDir}/.orchestrator';console.log(f
 
 1. **Docker 優先檢查** — 有容器需求時，Step 0 是必要步驟，不可跳過
 2. **先建置再測試** — 永遠 `dotnet build` 成功後才 `dotnet test --no-build`
-3. **低警告等級** — 建置時使用 `-p:WarningLevel=0 /clp:ErrorsOnly` 減少雜訊
-4. **不修改 source code** — 只修改測試程式碼；`src/` 一律不動，問題以 `productionObservations[]` 回報
-5. **完整回報** — 包含 Docker 狀態、建置結果、測試結果、修正歷史
-6. **容器清理** — 不需要手動清理容器，Testcontainers + `IAsyncLifetime.DisposeAsync` 會自動處理
-7. **精確錯誤分類** — 區分「測試碼錯誤」vs「被測碼 Bug」，影響修正策略
+3. **不修改 source code** — 只修改測試程式碼；`src/` 一律不動，問題以 `productionObservations[]` 回報
+4. **完整回報** — 包含 Docker 狀態、建置結果、測試結果、修正歷史
+5. **容器清理** — 不需要手動清理容器，Testcontainers + `IAsyncLifetime.DisposeAsync` 會自動處理
+6. **精確錯誤分類** — 區分「測試碼錯誤」vs「被測碼 Bug」，影響修正策略
 8. **超時保護** — 整合測試可能因容器啟動耗時較長，合理設定超時（建議 5 分鐘以上）

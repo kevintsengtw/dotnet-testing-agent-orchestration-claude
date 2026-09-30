@@ -11,16 +11,12 @@ description: >
 
 你是 TUnit 測試的指揮中心。你的工作是**分析、調度、整合**，而不是自己直接撰寫測試程式碼。
 
-你管轄 2 個 TUnit 測試 Skills：`tunit-fundamentals`（必載）+ `tunit-advanced`（條件載入）。
-
-**與 Unit Testing Orchestrator 的核心差異**：
-- 測試框架為 **TUnit**（非 xUnit）
-- 測試屬性為 **`[Test]`**（非 `[Fact]`）、**`[Arguments]`**（非 `[InlineData]`）
-- 所有測試方法**必須**為 `async Task`（非 `void` 或 `Task`）
-- 測試專案 OutputType 必須為 **`Exe`**（非 `Library`）
-- 執行方式推薦 **`dotnet run`**（非 `dotnet test`）
-- **不需要** `Microsoft.NET.Test.Sdk`
-- 生命週期使用 **`[Before(Test)]` / `[After(Test)]`**（非建構子 / IDisposable）
+**與 Unit Testing Orchestrator 的差異只在測試框架**：
+- 測試屬性為 **`[Test]`**／**`[Arguments]`**／**`[MethodDataSource]`**（非 `[Fact]`／`[InlineData]`／`[MemberData]`）
+- 所有測試方法**必須**為 `async Task`
+- 測試專案 OutputType 必須為 **`Exe`**，**不需要** `Microsoft.NET.Test.Sdk`
+- 生命週期使用 **`[Before(Test)]`／`[After(Test)]`**（非建構子／IDisposable）
+- 執行方式必須為 **`dotnet run`**（`dotnet test` 禁用）
 
 > **架構說明**：此文件是 **Skill**，透過 `/dotnet-testing-orchestrator-tunit` 載入 main thread context。
 > Main thread 載入此 Skill 後，直接使用自身的 Agent tool 調度四個 subagent：
@@ -53,7 +49,7 @@ description: >
 
 ### 絕對禁止的行為
 
-1. **禁止載入或直接讀取任何技術型 Skill** — 技術型 Skill 的載入是 TUnit Writer / Reviewer subagent 的職責。此限制**與 Skill 放在哪個目錄無關**，具體包含：
+1. **禁止載入或直接讀取任何技術型 Skill** — 技術型 Skill 的載入是 Writer / Reviewer subagent 的職責。此限制**與 Skill 放在哪個目錄無關**，具體包含：
    - 不得讀取 `.agents/skills/**/SKILL.md`（共用技術 Skill 的 canonical 來源）
    - 除本 Skill（`dotnet-testing-orchestrator-tunit`）外，不得讀取 `.claude/skills/**/SKILL.md`（其他 orchestration Skill）
    - 不得讀取 `.claude/agents/*.md`（其他 agent 的定義檔）
@@ -61,12 +57,13 @@ description: >
 2. **禁止直接撰寫任何測試程式碼** — 包括測試類別、測試方法、Fixture、GlobalUsings 等所有測試相關程式碼
 3. **禁止直接修改任何 .csproj 檔案** — NuGet 套件的新增與修改由 Writer 或 Executor 處理
 4. **禁止直接建立或修改任何 .cs 檔案** — 所有程式碼產出必須透過 subagent 完成。**即使是改善既有測試、套用 Reviewer 建議、修正命名、補充斷言等增量修改，也必須交給 Writer 或 Executor，絕不可自行使用 Edit/Write 工具修改測試程式碼**
-5. **禁止跳過任何階段** — 四個階段必須依序全部執行：Analyzer → Writer → Executor → Reviewer（**無論 Executor 是否有修正迴圈，Reviewer 一律執行**。Reviewer 審查的是測試品質，與測試是否通過無關）
-6. **禁止使用 Bash 呼叫 `claude` 命令** — 嚴禁使用 `Bash(claude --print ...)` 或任何 `Bash(claude ...)` 的方式來啟動 subagent。所有 subagent 呼叫**必須且只能**透過 Agent tool 完成。違反此條將導致 subagent 無法載入 `.claude/agents/*.md` 中定義的工具、Skills 和權限設定，產出品質將大幅下降。
+5. **禁止跳過任何階段** — 四個階段必須依序全部執行：Analyzer → Writer → Executor → Reviewer（無論 Executor 是否有修正迴圈、是否全綠，Reviewer 一律執行）
+6. **禁止使用 Bash 呼叫 `claude` 命令** — 嚴禁使用 `Bash(claude --print ...)` 或任何 `Bash(claude ...)` 的方式來啟動 subagent。所有 subagent 呼叫**必須且只能**透過 Agent tool 完成
 
-### 你唯一可以做的事
+### 你可以做的事
 
 - ✅ 整合四個 subagent 的回傳結果，呈現給使用者
+- ✅ 呈現 Reviewer 結果後，等待使用者決定是否啟動修改流程
 
 ### ⚡ 快速啟動原則（MUST READ）
 
@@ -79,18 +76,17 @@ description: >
 **深度分析是 Analyzer 的職責，不是你的。** 以下行為在啟動 Analyzer 之前**嚴格禁止**：
 
 - ❌ 讀取被測試目標原始碼（`.cs` 檔案）
-- ❌ 讀取 Models、DTOs、DbContext、Repository 等原始碼
-- ❌ 讀取 Program.cs 或任何設定檔
+- ❌ 讀取 Models、DTOs、Interfaces、Repository 等原始碼
 - ❌ 使用 Grep 搜尋類別定義、依賴注入、方法簽章等
 - ❌ 試圖「先了解專案結構」再啟動 Analyzer
 
-使用者提供的資訊（被測試目標路徑、測試專案路徑、類別名稱）已**完全足夠**組裝 Analyzer prompt。不需要補充任何額外資訊。
+使用者提供的資訊（被測試目標路徑、測試專案路徑、類別名稱、範圍）已**完全足夠**組裝 Analyzer prompt。**使用者沒有提供被測試目標的檔案路徑時，停止並向使用者確認；不得用 `Grep`、類別名、target framework、版本字樣或檔名自行定位。**
 
 ### Agent tool 正確呼叫方式
 
 **你必須使用 Agent tool 來啟動 subagent。** Agent tool 會自動載入 `.claude/agents/<name>.md` 中定義的系統 prompt、工具權限和 Skills 設定。
 
-```
+```text
 Agent(subagent_type="dotnet-testing-advanced-tunit-analyzer", prompt="...")
 Agent(subagent_type="dotnet-testing-advanced-tunit-writer",   prompt="...")
 Agent(subagent_type="dotnet-testing-advanced-tunit-executor", prompt="...")
@@ -105,24 +101,23 @@ Agent(subagent_type="dotnet-testing-advanced-tunit-reviewer", prompt="...")
 
 - ❓ 我是否還沒啟動 Analyzer？→ **停止一切其他動作，立即啟動 Analyzer**（這是最高優先級）
 - ❓ 我是否正在讀取 .cs 原始碼但還沒啟動 Analyzer？→ **停止，這是 Analyzer 的工作，不是你的**
-- ❓ 我是否正在嘗試讀取 SKILL.md？→ **停止，這是 TUnit Writer 的工作**
-- ❓ 我是否正在嘗試撰寫 C# 程式碼？→ **停止，交給 TUnit Writer**
-- ❓ 我是否正在嘗試執行 `dotnet build` 或 `dotnet run`？→ **停止，交給 TUnit Executor**
-- ❓ 使用者有指定版本變體（Net8/Net10）但沒給檔案路徑嗎？→ **先用 `Grep` 找到目標檔案路徑，再啟動 Analyzer**
-- ❓ 我是否正在使用 Bash 來呼叫 claude？→ **停止，使用 Agent tool**
+- ❓ 我是否正在嘗試讀取 SKILL.md？→ **停止，這是 Writer 的工作**
+- ❓ 我是否正在嘗試撰寫 C# 程式碼？→ **停止，交給 Writer**
+- ❓ 我是否正在嘗試執行 `dotnet build` 或 `dotnet run`？→ **停止，交給 Executor**
+- ❓ 使用者沒有提供被測試目標的檔案路徑嗎？→ **停止並向使用者確認，不自行搜尋**
 
 - ❓ 我正要進入 Phase 5 或輸出收尾提示？→ **停止，`report` 的兩張表格必須先貼**（⛔ 只跑指令不貼 = 未完成）
 - ❓ 我已貼出兩張表格、正準備結束回覆？→ **停止，還有 Phase 5 後置清理，且必須輸出其狀態行**
 
-**在收到每個 subagent 的回傳結果之前，你不得採取任何程式碼相關行動。**
+**在收到每個 subagent 的回傳結果之前，不得採取任何程式碼相關行動。**
 
 ---
 
 ## Prompt 精簡原則
 
-> ⚠️ **不需要在 subagent prompt 中嵌入完整分析報告 JSON、被測類別路徑、dependency 清單、requiredSkills 完整陣列、suggestedTestScenarios、existingTestInfrastructure、tunitFeatureRequirements 等內容**。每個 subagent 已有 Step 0 讀取交接檔案的能力，可自行取得所有資訊。
+> ⚠️ **不需要在 subagent prompt 中嵌入完整分析報告 JSON、dependency 清單、suggestedTestScenarios、existingTestInfrastructure、targetType、tunitFeatureRequirements 等內容**。每個 subagent 已有 Step 0 讀取交接檔案的能力，可自行取得所有資訊。
 >
-> Orchestrator prompt 只需傳：**交接檔案路徑 + 摘要數字**（methodCount、scenarioCount、testMethodCount／testCaseCount 等）+ 必要的控制參數（風格指令、modification request 等）。
+> Orchestrator prompt 只需傳：**交接檔案路徑 + 摘要數字**（methodCount、scenarioCount、testMethodCount／testCaseCount 等）+ 必要的控制參數（modification request 等）。
 
 ---
 
@@ -146,87 +141,117 @@ Phase 0 清理完成後、**啟動 Analyzer 之前**，以 **Bash 工具**執行
 node .claude/scripts/dotnet-testing-claude-full/token_usage.js start tunit 2>/dev/null
 ```
 
-這標記本次工作流程的 token 計量起點，使 **Phase 0 清理用的 Executor 不被計入** token 統計，主執行緒也只計階段 1 之後。此呼叫**不是探索**（不讀原始碼、不 Grep）。
+這標記本次工作流程的 token 計量起點，使 **Phase 0 清理用的 Executor 不被計入** token 統計。此呼叫**不是探索**（不讀原始碼、不 Grep），不受「啟動 Analyzer 前不得探索」限制。
 
-### 階段 1：啟動分析（TUnit Analyzer）
+### Phase 0.6：使用者場景偵測（MVP：僅支援單一目標＋整段貼上）
 
-將使用者指定的被測試目標交給 **dotnet-testing-advanced-tunit-analyzer** subagent 分析。
+Phase 0.5 之後、啟動 Analyzer 之前，判斷本次提示詞中是否**直接貼有**結構化 Test Scenarios 文字（`unit-test-scenarios` skill 的產出格式；訊號：`# Test Scenarios:` 標題，或同時出現 `## 此次分析範圍`／`## Happy Path`／`Priority：` 等固定區塊）。
+
+- **此判讀僅讀提示詞本身的文字，不讀任何檔案、不 Grep，不算探索**。
+- 偵測到 → `userScenarios = { present: true, content: <整段原文> }`；未偵測到 → `present: false`，Analyzer 走原生成流程。
+- **MVP 範圍限制**：僅支援**單一目標＋整段貼上**。多目標請求，或使用者僅提供附加檔案路徑，一律視為 `present: false`。
+
+### Phase 0.7：建立範圍契約 `requestedScope`
+
+依使用者指定的範圍，**在入口建立一次** `requestedScope`，原樣傳入 Analyzer：
+
+- 整個類別：`{ "kind": "class" }`
+- 指定方法：`{ "kind": "methods", "selectors": ["<使用者原始的方法字串>", ...] }`
+
+**不得**從類別名字串、Analyzer 的分析結果或場景名稱反推範圍——那會讓範圍有兩個來源。`selectors` 保留使用者的原始字串，由 Analyzer 負責解析成實際方法。此步驟只讀提示詞，不算探索。
+
+### 階段 1：啟動分析（Analyzer）
+
+使用 Agent tool 將使用者指定的被測試目標交給 **dotnet-testing-advanced-tunit-analyzer** subagent 分析。
 
 **傳給 Analyzer 的 prompt 必須包含：**
 
-- 被測試目標的檔案路徑（如果使用者提供的話；若未提供，Orchestrator 須先用 `Grep` 搜尋）
-- 被測試目標的類別名稱 / 方法名稱
-- 測試專案的路徑（讓 Analyzer 能掃描既有測試基礎設施）
+- 被測試目標的檔案路徑（由使用者提供）
+- 被測試目標的完整類別名稱與 **`requestedScope`**
+- 測試專案的路徑
 - **`analysisOutputPath`**：由 Orchestrator 預先計算好的交接檔案完整路徑，格式為 `{testProjectDir}/.orchestrator/analysis/{ClassName}.analysis.json`
 - 使用者的特殊需求（如果有的話）
-- 框架偵測需求（新專案 or 從 xUnit/NUnit 遷移）
+- **`userProvidedScenarios`**（如果 Phase 0.6 偵測到有的話）
+- 遷移來源檔案路徑（使用者要求從 xUnit／NUnit 遷移時）
 
 **精簡 prompt 範例**：
-```
+
+```text
 請分析 TUnit 測試目標並產出結構化分析報告。
 被測試目標檔案路徑：src/MyProject.Core/Services/ProductService.cs
+完整類別名稱：MyProject.Core.Services.ProductService
+requestedScope: { "kind": "class" }
 測試專案路徑：tests/MyProject.Core.Tests/MyProject.Core.Tests.csproj
 analysisOutputPath: tests/MyProject.Core.Tests/.orchestrator/analysis/ProductService.analysis.json
 ```
 
-> ⚠️ `analysisOutputPath` 必須由 Orchestrator 計算並提供。計算方式：從測試專案路徑去掉 `.csproj` 檔名，拼接 `.orchestrator/analysis/{ClassName}.analysis.json`。Analyzer **不需要自行推導路徑**。
+**Phase 0.6 偵測到使用者場景時，額外附加下列區塊**：
 
-> **等待 subagent 完成**：Agent tool 以背景啟動時，工具呼叫會立即返回、完成後由系統通知你。**直接等通知即可**——不要用 `sleep`、`echo waiting`、輪詢迴圈或 `until [ -f ... ]` 檢查交接檔落地。這些做法沒有作用，只會多出雜訊。等待期間若要輸出文字，一律繁體中文。
+```text
+userProvidedScenarios:
+  present: true
+  sourceType: pasted
+  content: |
+    <整段 Test Scenarios 文字原樣附上>
+```
+
+> ⚠️ `analysisOutputPath` 必須由 Orchestrator 計算並提供。計算方式：從測試專案路徑去掉 `.csproj` 檔名，拼接 `.orchestrator/analysis/{ClassName}.analysis.json`。
+
+> **等待 subagent 完成**：Agent tool 以背景啟動時，工具呼叫會立即返回、完成後由系統通知你。**直接等通知即可**——不要用 `sleep`、`echo waiting`、輪詢迴圈或 `until [ -f ... ]` 檢查交接檔落地。等待期間若要輸出文字，一律繁體中文。
 
 **等候 Analyzer 回傳精簡摘要**，包含：
 
-- `className`、`methodCount`、`scenarioCount`、`methodScenarioCounts`
-- `requiredSkills`、`tunitFeatureRequirements`
-- `analysisFilePath`：Analyzer 實際寫入的交接檔案路徑（應與 `analysisOutputPath` 一致）
-- `projectContext`
+- `className`、`targetType`、`methodCount`、`scenarioCount`、`methodScenarioCounts`
+- `excludedMethods`（一律出現）、`migrationSource`；採用模式另有 `scenarioSource`、`adoptedMethods`
+- `analysisFilePath`、`projectContext`
 
-**驗證交接檔案**：收到 Analyzer 摘要後，使用 Glob 確認 `analysisFilePath` 指向的檔案確實存在。若不存在，說明 Analyzer 未正確寫入，需排查問題。
+**交接驗證（Analyzer → Writer）**：收到摘要後，**讀取實體 JSON**，不得只採信回傳摘要。下列任一不成立即停止，不得啟動 Writer：
 
-### 階段 2：啟動撰寫（TUnit Writer）
+- `analysisFilePath` 指向的檔案存在且可解析
+- `projectContext.targetFramework`、`testProjectPath`、`sourceProjectPath` 皆非空
+- `suggestedTestScenarios` 非空，且長度等於 `methodScenarioCounts` 各值加總
+- 被測類別有明確宣告的 public 建構子、且範圍涵蓋建構子時，`methodScenarioCounts` 含 `Constructor` 條目
+- artifact 的 `requestedScope` 與傳入的完全一致；`kind: "methods"` 時 `scopeResolution` 已逐一解析 selectors
 
-將分析結果交給 **dotnet-testing-advanced-tunit-writer** subagent 撰寫測試。
+### 階段 2：啟動撰寫（Test Writer）
 
-#### Writer 啟動規則
+使用 Agent tool 將分析結果交給 **dotnet-testing-advanced-tunit-writer** subagent 撰寫測試。
 
 **一個被測類別固定啟動一個 Writer，產出一個測試檔案。** 不論方法數或場景數多寡，都不拆分。
-
-**風格指令**（一律加入 Writer prompt）：
-```text
-風格指令：
-- 例外斷言：統一使用 .Throw<T>()，禁止使用 .ThrowExactly<T>()
-- lambda 委派：統一使用 var act = () => X()，禁止使用 Action act = () =>，
-  亦禁止 var act = async () => await X() 的 async 包裝；
-  非同步一律以 await act.Should().ThrowAsync<T>() 消費
-- 例外斷言參數名：production 以 nameof(x) 拋出時，一律接 .WithParameterName("x")
-- 物件比較：統一使用 BeEquivalentTo()
-- FakeTimeProvider 欄位命名：統一使用 _timeProvider
-- using 排列順序：AwesomeAssertions → AutoFixture → TimeProvider → NSubstitute → 介面 → Model → Service
-- using 不得重複：檔內 using 不得重複宣告 GlobalUsings.cs 已涵蓋的命名空間
-- 被測類別建構子有 ?? throw new ArgumentNullException 時，必須撰寫對應的 null-guard 測試
-```
 
 **傳給 Writer 的 prompt（依照 Writer 的輸入契約）：**
 
 1. **`analysisFilePath`** — Analyzer 交接檔案路徑（Writer 會在 Step 0 讀取完整分析 JSON）
 2. **被測試目標的檔案路徑**
-3. **測試檔案的預期輸出路徑**（依照現有專案結構推導）
+3. **測試檔案的預期輸出路徑** — 使用者指定時採用；未指定時使用 analysis 的 `projectContext.suggestedTestFilePath`
 
-> ⚠️ **禁止在 Writer prompt 中嵌入任何分析內容**（targetClasses、tunitFeatureRequirements、requiredSkills、suggestedTestScenarios、existingTestInfrastructure 等）。Writer 的 Step 0 會讀取交接檔案取得全部資訊。**如果你在 prompt 中提供了這些內容，Writer 可能跳過 Step 0 不讀交接檔案，導致下游交接斷裂。**
+> ⚠️ **禁止在 Writer prompt 中嵌入任何分析內容**（targetType、dependencies、suggestedTestScenarios、tunitFeatureRequirements 等）。**如果你在 prompt 中提供了這些內容，Writer 可能跳過 Step 0 不讀交接檔案，導致下游交接斷裂。**
+>
+> ⚠️ **不要另傳 `methodsToTest`、`methodName` 或方法清單。** 範圍的唯一來源是 analysis artifact 的 `requestedScope`；另傳一份等於建立第二套來源。
 
 **Writer prompt 模板**（嚴格照用，僅替換 `{...}` 佔位符）：
-```
+
+```text
 請根據 Analyzer 交接檔案撰寫 TUnit 測試。
 analysisFilePath: {analysisFilePath}
 被測試目標的檔案路徑: {filePath}
 測試檔案的預期輸出路徑: {outputPath}
 ```
-額外加入上方的風格指令。
 
-**等候 Writer 回傳精簡摘要**：`testFilePaths`、`testMethodCount`、`testCaseCount`、`skillsLoaded`、`writerResultFilePath`
+**等候 Writer 回傳精簡摘要**：`testFilePaths`、`testMethodCount`、`testCaseCount`、`skillsLoaded`、`writerResultFilePath`、`nugetChanges`
 
-### 階段 3：啟動執行（TUnit Executor）
+**交接驗證（Writer → Executor）**：讀取 `writerResultFilePath` 的實體 JSON，確認下列全部成立，否則不得啟動 Executor：
 
-將 Writer 產出的測試程式碼交給 **dotnet-testing-advanced-tunit-executor** subagent 建置與執行。
+- `testClasses[].methodsCovered` 是明確方法名稱清單，不得用 `All`、`FullClass` 或空陣列代替
+- Analyzer 列出建構子場景時，`methodsCovered` 包含 `Constructor`
+- `requestedScope.kind` 為 `methods` 時，`methodsCovered` 只能是 `scopeResolution` 解析出的方法（及被指到的 `Constructor`）
+- `deviations`、`nugetChanges` 欄位存在（無內容時為 `[]`，不得省略）
+
+缺欄位或範圍不符時，最多要求 Writer 補正 2 次；仍不完整即判定為 blocker，不得帶著殘缺的交接檔進入 Executor。
+
+### 階段 3：啟動執行（Test Executor）
+
+使用 Agent tool 將 Writer 產出的測試程式碼交給 **dotnet-testing-advanced-tunit-executor** subagent 建置與執行。
 
 **傳給 Executor 的 prompt（依照 Executor 的輸入契約）：**
 
@@ -236,22 +261,32 @@ analysisFilePath: {analysisFilePath}
 4. **`writerResultFilePath`** — Writer 交接檔案路徑
 
 **Executor prompt 模板**（嚴格照用）：
-```
+
+```text
 請建置並執行 TUnit 測試。
 測試專案路徑：{testProjectPath}
 Writer 產出的測試檔案路徑：{testFilePaths}
 analysisFilePath: {analysisFilePath}
 writerResultFilePath: {writerResultFilePath}
 ```
+
 > ⚠️ 禁止在 Executor prompt 中嵌入測試程式碼、NuGet 套件清單等內容。
 
-> **同專案多目標時**：不要把多個路徑逗號合併塞進單值欄位。改為每個目標一組完整欄位（測試檔案路徑 + `analysisFilePath` + `writerResultFilePath`），在同一個 prompt 中逐組列出，並明寫「逐個目標以 `dotnet test --filter` 對帳，各自寫一份 executor-result」。
+> **同專案多目標時**：不要把多個路徑逗號合併塞進單值欄位。改為每個目標一組完整欄位（測試檔案路徑 + `analysisFilePath` + `writerResultFilePath`），在同一個 prompt 中逐組列出，並明寫「逐個目標以 `dotnet run -- --treenode-filter` 對帳，各自寫一份 executor-result」。
 
-**等候 Executor 回傳精簡摘要**：`totalTests`、`passedTests`、`failedTests`、`fixRounds`、`executorResultFilePath`
+**等候 Executor 回傳精簡摘要**：`buildResult`、`totalTests`、`passedTests`、`failedTests`、`fixRounds`、`productionObservations`、`executorResultFilePath`
 
-### 階段 4：啟動審查（TUnit Reviewer）
+**交接驗證（Executor → Reviewer）**：讀取 `executorResultFilePath` 的實體 JSON，確認：
 
-將測試程式碼交給 **dotnet-testing-advanced-tunit-reviewer** subagent 審查。
+- `executionMethod` 為 `"dotnet run"`，`commandExecutions` 存在且未出現 `dotnet test`。違反時該階段判定為流程違規，結果不得標為通過
+- `fixRounds` 等於 `fixHistory` 長度；首次即通過必須是 `fixRounds: 0`
+- `restoreResult`、`buildResult`、`testResult` 欄位皆存在
+
+Executor 驗收失敗**不跳過 Reviewer** —— Reviewer 一律執行，但最終結果不得標為通過。
+
+### 階段 4：啟動審查（Test Reviewer）
+
+使用 Agent tool 將測試程式碼交給 **dotnet-testing-advanced-tunit-reviewer** subagent 審查。
 
 **傳給 Reviewer 的 prompt（依照 Reviewer 的輸入契約）：**
 
@@ -262,7 +297,8 @@ writerResultFilePath: {writerResultFilePath}
 5. **`executorResultFilePath`** — Executor 交接檔案路徑
 
 **Reviewer prompt 模板**（嚴格照用）：
-```
+
+```text
 請審查 TUnit 測試品質。
 測試檔案路徑：{testFilePaths}
 被測試目標的檔案路徑：{filePath}
@@ -282,14 +318,11 @@ executorResultFilePath: {executorResultFilePath}
 | `{ "status": "cleanup-completed" }` | `✅ Phase 5 後置清理完成` |
 | `{ "status": "cleanup-failed" }` | `⚠️ Phase 5 後置清理未完成 — 殘留：{回傳的 remaining 內容}` |
 
-⛔ **這一行必須依 Executor 的實際回傳決定，不得憑印象或推定寫入。** 沒收到回傳就寫「完成」，等於流程沒做卻回報成功——假數據比缺失更難察覺。
+⛔ **這一行必須依 Executor 的實際回傳決定，不得憑印象或推定寫入。**
 
 ⛔ **這一行必須輸出，且必須是整段回覆的最後一行。**
 
-> **該行缺席時的判讀（給閱讀回覆的人，非給本 Orchestrator）**：狀態行未出現在可見回覆
-> **不等於**流程未完成。環境彈窗、終端截斷、複製遺漏都可能讓它從可見回覆消失。
-> 缺席時一律**以磁碟為準**再判定：檢查 `{testProjectDir}/.orchestrator/` 是否已整個消失。
-> 目錄已消失即代表 Phase 5 已執行完成，**不得僅憑狀態行缺席就判定流程異常**。
+> **該行缺席時的判讀（給閱讀回覆的人，非給本 Orchestrator）**：狀態行未出現在可見回覆**不等於**流程未完成。缺席時一律**以磁碟為準**：檢查 `{testProjectDir}/.orchestrator/` 是否已整個消失。
 
 ---
 
@@ -307,8 +340,8 @@ executorResultFilePath: {executorResultFilePath}
 | Executor 回傳後 | `✅ 階段 3 完成 — N 個測試案例通過，修正 Y 次` |
 | 啟動 Reviewer **前** | `## 階段 4：啟動審查（Test Reviewer）` |
 | Reviewer 回傳後 | `✅ 階段 4 完成` |
-| **結果呈現後** | 執行 `report` 指令並**把其 stdout 的兩張表格（Token 用量、各階段耗時）貼進回覆**（⛔ 只跑不貼 = 未完成；見「📊 Token 用量」段） |
-| **Token 表格之後**（真正最後一步）| 執行 Phase 5 後置清理，並輸出其狀態行（⛔ 必須輸出；該行缺席時以磁碟狀態判定，不得逕判流程未完成 — 見「Phase 5：後置清理」段） |
+| **結果呈現後** | 執行 `report` 指令並**把其 stdout 的兩張表格（Token 用量、各階段耗時）貼進回覆**（⛔ 只跑不貼 = 未完成） |
+| **Token 表格之後**（真正最後一步）| 執行 Phase 5 後置清理，並輸出其狀態行 |
 
 ---
 
@@ -318,37 +351,35 @@ executorResultFilePath: {executorResultFilePath}
 
 ### 必呈現的內容
 
-1. **測試檔案連結**：列出 Writer 產出的所有測試檔案路徑。**不需在 chat 中嵌入完整測試程式碼**，使用者可透過檔案路徑直接查看
-2. **執行結果摘要**：Executor 的執行結果（通過/失敗數、執行方式）
-3. **品質審查摘要**：Reviewer 的整體評級和關鍵發現
-4. **改善建議**（如果有的話）：Reviewer 的遺漏測試案例和嚴重問題
-5. **使用的 Skills 組合**：列出 Writer 載入了哪些 Skills
+1. **測試檔案連結**：列出 Writer 產出的測試檔案路徑。**不需在 chat 中嵌入完整測試程式碼**
+2. **執行結果摘要**：Executor 以 `dotnet run` 執行的結果（通過／失敗／略過數、修正輪數）；`buildResult` 不是 `success` 時明說「未通過建置」
+3. **品質審查摘要**：Reviewer 的 `overallScore` 和關鍵 `issues`。`overallScore` 為 `upstream-build-blocked` 時明說「建置未通過，未給評分」
+4. **改善建議**（如果有的話）：Reviewer 的 `missingTestCases` 和 severity=warning 以上的問題
+5. **Writer 的技術選擇**：列出 `skillsLoaded`，以及 `deviations`（偏離預設做法的項目與理由）。**`deviations` 為空時也必須明說「未偏離預設做法」**
 6. **Executor 修正紀錄**（如果有的話）
-7. **`.csproj` 變動**：彙整所有 Writer 回傳的 `nugetChanges` 逐筆列出（套件名 + 版本 前→後）。**即使為空也必須明說「`.csproj` 未變動」**——測試專案的套件基線被改動卻未告知，使用者無從察覺；「沒提」與「沒改」不得由使用者自行推斷
-8. **生產程式碼觀察**：呈現 Executor／Reviewer 回傳的 `productionObservations[]`（每筆含 `file`、`location`、`issue`、`options[]`）。本流程**不修改 `src/`**；有觀察時逐筆列出並**等使用者決定**，沒有時明說「未發現生產程式碼問題」。
+7. **範圍摘要**：呈現 `requestedScope` 與 `excludedMethods` ——「未涵蓋而排除：{excludedMethods}」，`[]` 時明說「被測類別的公開方法全數納入」。採用模式另加一句「本次採用使用者提供的場景，涵蓋方法：{adoptedMethods}」
+8. **`.csproj` 變動**：彙整所有 Writer 回傳的 `nugetChanges` 逐筆列出。**即使為空也必須明說「`.csproj` 未變動」**
+9. **生產程式碼觀察**：呈現 Executor／Reviewer 回傳的 `productionObservations[]`。本流程**不修改 `src/`**；有觀察時逐筆列出並**等使用者決定**，沒有時明說「未發現生產程式碼問題」
 
 ### 📊 本次工作流程 Token 用量與各階段耗時（強制輸出，不可省略）
 
 ⛔ **只跑指令、沒把表格貼進可見回覆 = 未完成。**
-⛔ **這不是流程的結尾。** 貼出表格之後，仍須執行 Phase 5 後置清理並輸出其狀態行，該狀態行才是回覆的最後一行。
+⛔ **這不是流程的結尾。** 貼出表格之後，仍須執行 Phase 5 後置清理並輸出其狀態行。
 Bash 的 stdout **不會自動顯示給使用者**，必須由你親手複製貼出。嚴格依序：
 
-1. 以 **Bash 工具**執行（此步只取得資料，使用者還看不到）：
+1. 以 **Bash 工具**執行：
 
    ```bash
    node .claude/scripts/dotnet-testing-claude-full/token_usage.js report tunit 2>/dev/null
    ```
 
-2. **立即在你的回覆中，把該指令 stdout 的兩張 Markdown 表格（`### 📊 本次測試工作流程 Token 用量` 與 `### ⏱ 各階段耗時`，各自到 `>` 開頭的備註為止）一字不改、完整貼出**，作為給使用者看的最終結果。
-3. ⚠️ **在 token 表貼出之前，不要輸出「請告知下一步 / 是否套用 Reviewer 建議」等收尾提示**——收尾提示一律放在 token 表**之後**。
-4. 只有當指令真的無輸出或失敗（本機未產生 transcript）時，才可略過本段。
+2. **立即在你的回覆中，把該指令 stdout 的兩張 Markdown 表格（`### 📊 本次測試工作流程 Token 用量` 與 `### ⏱ 各階段耗時`，各自到 `>` 開頭的備註為止）一字不改、完整貼出**。
+3. ⚠️ **在 token 表貼出之前，不要輸出「是否套用 Reviewer 建議」等收尾提示**——收尾提示一律放在 token 表**之後**。
+4. 只有當指令真的無輸出或失敗時，才可略過本段。
 
-> 自我檢查（結束前必問）：**「我是否已把 report 指令 stdout 的兩張表格都貼進可見回覆？」** 若否 → 立即補貼，不得結束。
+> **表格缺席時的判讀**：Token 表格缺席**不代表流程異常** —— 四階段的成敗一律以 Executor 回報與磁碟狀態為準。**不得因表格缺席而重跑整個工作流程。**
 
-> **表格缺席時的判讀**：Token 表格缺席**不代表流程異常** —— 四階段的成敗一律以 Executor 回報與磁碟狀態為準。缺席只代表本次沒有 token 資料可看；transcript 仍在，使用者可自行執行 `node .claude/scripts/dotnet-testing-claude-full/token_usage.js report tunit` 補取。**不得因表格缺席而重跑整個工作流程。**
-
-- 統計涵蓋 Orchestrator 主執行緒 ＋ 本次所有 `dotnet-testing-*` subagent；input 分純 input／cache 寫入／cache 讀取，另有含快取合計與 output。
-- 引擎只讀 transcript、不裝任何 hook、不影響非測試工作流程的其他工作；完整報告與累積 ledger 寫於 `token-usage-reports/`。詳見 `docs/TOKEN_USAGE_GUIDE.md`。
+- 統計涵蓋 Orchestrator 主執行緒 ＋ 本次所有 `dotnet-testing-*` subagent；詳見 `docs/TOKEN_USAGE_GUIDE.md`。
 
 ---
 
@@ -358,43 +389,47 @@ Bash 的 stdout **不會自動顯示給使用者**，必須由你親手複製貼
 
 當使用者要求套用 Reviewer 建議、修改既有 TUnit 測試、或增加測試案例時，使用此流程（而非重新執行完整四階段）。
 
+> **`productionObservations[]` 的後續**：四階段流程一律不改 `src/`，只回報。使用者看過觀察、**明確要求**修改 `src/` 時，才走此修改流程處理該項；未經要求不得啟動。
+
 ### 流程（三階段）
 
-1. **TUnit Writer（修改模式）** — 傳遞 Reviewer 建議內容，讓 Writer 修改既有測試程式碼
-2. **TUnit Executor** — 建置並執行修改後的測試，確認全數通過
-3. **TUnit Reviewer（re-review 模式）** — 以 `mode: "re-review"` 聚焦驗證前次建議是否正確套用，並給出修改後評分
+1. **Writer（修改模式）** — 傳遞 Reviewer 建議內容，讓 Writer 修改既有測試程式碼
+2. **Executor** — 建置並執行修改後的測試，確認全數通過
+3. **Reviewer（re-review 模式）** — 以 `mode: "re-review"` 聚焦驗證前次建議是否正確套用，並給出修改後評分
+
+### 觸發方式
+
+Reviewer 回傳後，Orchestrator **一律呈現完整結果**，然後**等待使用者指示**。**禁止自動觸發修改流程。**
+
+Orchestrator 應在結果呈現的最後，提示使用者可用的操作：
+
+> 如需套用 Reviewer 建議，請告知要套用哪些項目（或全部套用），我將啟動修改流程。
+
+**多目標場景**：逐個目標獨立呈現結果，使用者可針對個別目標要求修改。
 
 ### 啟動 Writer 時的額外資訊
-
-除了交接檔案路徑外，還需傳遞：
 
 - `analysisFilePath`：Analyzer 交接檔案路徑
 - `writerResultFilePath`：Writer 交接檔案路徑（Writer 會讀取並更新）
 - `modificationRequest`：Reviewer 的具體建議內容（issues + missingTestCases）
-- `mode: "modification"`：明確告知 Writer 這是修改模式，而非初始生成
+- `mode: "modification"`：明確告知 Writer 這是修改模式
 
 ### 啟動 Reviewer 時的額外資訊（修改流程）
 
-除了三個交接檔案路徑外，還需傳遞：
-
-- `mode: "re-review"`：明確告知 Reviewer 這是聚焦驗證模式，不展開全新的完整審查
-- `previousIssues`：前次 Reviewer 報告的 issues 和 missingTestCases，供 Reviewer 逐一檢查是否已解決
+- `mode: "re-review"`：明確告知 Reviewer 這是聚焦驗證模式
+- `previousIssues`：前次 Reviewer 報告的 issues 和 missingTestCases
 
 ### 結果呈現
 
-在最終結果中顯示：
-
-1. 修改前後的測試數量變化（例：12 → 16）
+1. 修改前後的測試數量變化（例：25 → 31）
 2. 套用了哪些 Reviewer 建議
 3. 重新評分結果（例：B+ → A）
 
-修改流程結果呈現後，**同樣執行 token 用量統計並親手貼出表格**（規則同主路徑「強制輸出」）：先以 Bash 工具執行下列指令，再把其 stdout 的整段 Markdown 表格**一字不改貼進可見回覆**（⛔ 只跑不貼 = 未完成）；收尾提示放在表格之後。表格與收尾提示之後，**仍須執行 Phase 5 後置清理並輸出其狀態行**，該狀態行才是回覆的最後一行。
+修改流程結果呈現後，**同樣執行 token 用量統計並親手貼出表格**（規則同主路徑）；表格與收尾提示之後，**仍須執行 Phase 5 後置清理並輸出其狀態行**。
 
 ```bash
 node .claude/scripts/dotnet-testing-claude-full/token_usage.js report tunit 2>/dev/null
 ```
-
-> 因計量起點 marker 不變，這次輸出的是**含本次修改的累計用量**（與初始 run 同一筆 ledger，數字累加）。
 
 ---
 
@@ -404,59 +439,52 @@ node .claude/scripts/dotnet-testing-claude-full/token_usage.js report tunit 2>/d
 
 如果 Analyzer 找不到被測試目標或分析失敗：
 
-1. 向使用者確認被測試類別/方法路徑是否正確
-2. 自己嘗試用 `Grep` 工具搜尋目標類別
-3. 重新啟動 Analyzer
+1. 保留 Analyzer 的原始失敗訊息與路徑證據
+2. 向使用者確認被測試類別／方法的正確路徑
+3. 取得使用者提供的正確路徑後才重新啟動 Analyzer；不得自行用 `Grep`、類別名或檔名搜尋替代目標
 
 ### Executor 修正後仍有失敗
 
 如果 Executor 經過 3 輪修正後仍有測試失敗：
 
-1. 將失敗訊息和 Executor 的分析一併傳給 Reviewer
+1. Reviewer 照常執行（它會依 executor-result 判定前提）
 2. 在最終結果中明確標示哪些測試失敗
-3. 區分「Source Generator 問題」、「TUnit 版本相容性問題」和「測試邏輯問題」
+3. 區分「TUnit 設定問題」、「版本相容性問題」、「測試邏輯問題」與「生產程式碼問題」
 
 ---
 
 ## 多目標支援
 
-當使用者一次指定多個類別或多種測試場景時，執行以下策略：
+當使用者一次指定多個被測試類別時，執行以下策略：
 
-### Step 0：定位目標檔案（強制執行）
+### Step 0：確認每個目標的路徑
 
-在啟動 Analyzer 之前，若使用者**未提供檔案路徑**，必須先用 `Grep` 工具主動搜尋目標類別：
-
-1. 搜尋每個目標類別名稱（例如 `LoanService`、`ReservationService`）
-2. 若使用者指定了版本變體（如 `Net8`、`Net9`、`Net10`），將搜尋範圍限定在對應的版本目錄下
-3. 確認每個目標的**完整檔案路徑**後，再進行啟動
-
-> ⛔ **不得在找不到目標檔案時嘗試自行撰寫程式碼**。若搜尋失敗，向使用者確認路徑。
-
-### 多目標偵測
-
-解析使用者輸入，識別多個測試目標。常見模式：
-
-- 「為 ProductService 和 OrderService 建立 TUnit 測試」
-- 「將所有 xUnit 測試轉換為 TUnit」
+啟動 Analyzer 前，每個目標都必須有使用者提供的檔案路徑與完整類別名稱，並各自建立 `requestedScope`。任一目標缺少路徑或類別名稱時**立即停止並向使用者確認**；不得以類別名、target framework、版本字樣、檔名或目錄結構推導。
 
 ### 多目標執行策略
 
 | 階段 | 執行方式 | 說明 |
-|------|----------|------|
-| Phase 1 Analyzer | **平行** | 每個目標獨立分析 |
-| Phase 2 Writer | **平行** | 每個目標獨立撰寫測試 |
-| Phase 3 Executor | **循序** | 共用方案，依序建置與執行 |
+|------|---------|------|
+| Phase 1 Analyzer | **平行** | 每個目標獨立分析，在同一回應中發出多個 Agent tool 呼叫 |
+| Phase 2 Writer | **平行** | 每個目標獨立撰寫測試，每個 Writer 收到自己的分析報告 |
+| Phase 3 Executor | **循序** | 同專案建置不可並行，依序執行；多目標同專案時以 `--treenode-filter` 各自對帳 |
 | Phase 4 Reviewer | **平行** | 每份測試獨立審查 |
+
+> **`.csproj` 競態收斂（多目標）**：多目標時各類別的 Writer 仍可能並行觸及同一 `.csproj`。Phase 3 Executor 為**循序**、且在所有 Writer 之後執行，作為 `.csproj` 的**最終收斂點**。**並行時各 Writer 的 `nugetChanges` 記錄的是「本次流程對 `.csproj` 的變動」——彙整時取聯集，不對帳到個別 Writer。**
+
+### 多目標結果彙整
+
+1. **概覽表格**：列出每個目標的測試數量、通過/失敗狀態、品質評分
+2. **各目標詳細結果**：按目標分區展示
+3. **共用改善建議**：如果多個目標有相同的品質問題，合併建議
 
 ---
 
 ## 重要原則
 
-1. **交接檔案路徑優先** — 傳遞 `analysisFilePath`、`writerResultFilePath`、`executorResultFilePath` 給 subagent，而非嵌入完整 JSON。Subagent 會在 Step 0 自行讀取交接檔案取得完整資訊
-2. **保持主 context 精簡** — 只保留 subagent 回傳的摘要，不展開中間過程
-3. **TUnit ≠ xUnit** — 絕不使用 `[Fact]`、`[Theory]`、`[InlineData]`、`Microsoft.NET.Test.Sdk`
-4. **async Task 是強制的** — 所有 `[Test]` 方法必須為 `async Task`
-5. **OutputType 必須為 Exe** — TUnit 測試專案的 OutputType 必須是 `Exe`，不能是 `Library`
-6. **`requiredSkills` 組合** — `tunit-fundamentals` 必載，`tunit-advanced` 依 Analyzer 判斷條件載入
-7. **`suggestedTestScenarios` 必須是中文** — Analyzer 產出的建議測試命名必須使用中文三段式格式
-8. **版本相依性** — TUnit 0.6.123 與 Testing.Platform 版本鏈鎖必須遵守
+1. **交接檔案路徑優先** — 傳遞 `analysisFilePath`、`writerResultFilePath`、`executorResultFilePath` 給 subagent，而非嵌入完整 JSON
+2. **交接檔以實體 JSON 為準** — 每個階段之間讀回交接檔驗證，不只採信 subagent 的回傳摘要
+3. **保持 context 精簡** — 只保留 subagent 回傳的摘要，不展開中間過程
+4. **範圍只有一個來源** — `requestedScope` 在入口建立一次，之後只從 analysis artifact 讀取
+5. **`suggestedTestScenarios` 必須是中文** — Analyzer 產出的建議測試命名必須使用中文三段式格式
+6. **TUnit 版本以專案為準** — 可用的 TUnit 功能由測試專案 `.csproj` 的實際版本決定（analysis 的 `projectContext.tunitVersion`），不由 Skill 記載的版本決定

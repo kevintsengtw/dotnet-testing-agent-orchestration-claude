@@ -65,7 +65,7 @@ Orchestrator 啟動後，首先使用 Glob 檢查測試專案目錄下是否有�
 
 **工作內容：**
 
-- 搜尋 AppHost 的 `.csproj`（識別 `<IsAspireHost>true</IsAspireHost>` 或 Aspire SDK 版本宣告）
+- 讀取呼叫者提供的 AppHost `.csproj`（取得 Aspire SDK 版本與 `ProjectReference`）
 - 讀取 AppHost `Program.cs`，識別所有宣告的資源（資料庫、快取、API 服務）
 - 讀取被測試 WebAPI 的所有 Controller 及端點定義
 - 掃描測試專案既有的測試基礎設施（`AspireAppFixture`、`CollectionDefinition` 等）
@@ -190,5 +190,5 @@ Orchestrator 在調度各 subagent 時，只傳遞交接檔案路徑與摘要數
 | ----------------------- | -------------------------------------------------------------------------- |
 | Docker 未啟動           | 告知使用者啟動 Docker Desktop，中止執行（Aspire 測試強依賴 Docker）        |
 | Aspire workload 未安裝  | 告知執行 `dotnet workload install aspire`，中止執行                        |
-| Analyzer 找不到 AppHost | 以 `Grep` 搜尋 `<IsAspireHost>true</IsAspireHost>` 定位，重新啟動 Analyzer |
+| Analyzer 找不到 AppHost | 向使用者確認路徑後重新啟動 Analyzer，不自行搜尋 |
 | Executor 5 輪後仍失敗   | 將失敗訊息傳給 Reviewer，在最終結果區分「環境問題」與「程式邏輯問題」      |

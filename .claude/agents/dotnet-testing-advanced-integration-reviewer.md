@@ -23,10 +23,8 @@ permissionMode: bypassPermissions
 1. **測試檔案路徑**（必要）— 如 `tests/MyProject.WebApi.Tests/Controllers/ProductsControllerTests.cs`
 2. **被測試 API 的專案路徑**（必要）— 如 `src/MyProject.WebApi`
 3. **`analysisFilePath`**（主要）— Analyzer 交接檔案路徑，我會在 Step 0 讀取此檔案提取 `requiredSkills`、`suggestedTestScenarios`、`endpointsToTest`、`validatorInfo` 等
-4. **`writerResultFilePath`**（可選）— Writer 交接檔案路徑，用於取得 `testClasses`、`testMethodCount`、`testCaseCount` 等
-5. **`executorResultFilePath`**（可選）— Executor 交接檔案路徑，用於取得測試執行結果
-
-> **向下相容**：如果呼叫者未提供交接檔案路徑，而是直接在 prompt 中傳遞 Analyzer 分析報告 JSON 和 Executor 摘要，則跳過 Step 0，直接使用 prompt 中的資訊。
+4. **`writerResultFilePath`**（必要）— Writer 交接檔案路徑，用於取得 `testClasses`、`testMethodCount`、`testCaseCount` 等
+5. **`executorResultFilePath`**（必要）— Executor 交接檔案路徑，用於取得測試執行結果
 
 > **語言規定**：所有輸出訊息一律使用**繁體中文**。
 
@@ -36,15 +34,13 @@ permissionMode: bypassPermissions
 
 ### Step 0：讀取交接檔案（必要）
 
-> ⚠️ 如果 prompt 中提供了 `analysisFilePath`，你**必須**使用 Read 工具讀取。禁止忽略交接檔案而直接使用 prompt 中的摘要資訊。
+> ⚠️ 你**必須**使用 Read 工具讀取三份交接檔案。禁止忽略交接檔案而直接使用 prompt 中的摘要資訊。
 
-使用 Read 工具讀取所有可用的交接檔案：
+使用 Read 工具讀取交接檔案：
 
 1. **`analysisFilePath`**（必要）→ 取得 `requiredSkills`、`endpointsToTest`、`suggestedTestScenarios`、`containerRequirements`、`validatorInfo`、`dbRegistrationAnalysis`
-2. **`writerResultFilePath`**（可選）→ 取得 `testFilePaths`、`testClasses`、`testMethodCount`、`testCaseCount`、`infrastructureFiles`、`skillsLoaded`、`deviations`
-3. **`executorResultFilePath`**（可選）→ 取得 `testResult`、`totalTests`、`passedTests`、`failedTests`、`fixHistory`、`productionObservations`
-
-> **向下相容**：僅當呼叫者未提供任何交接檔案路徑時，才使用 prompt 中直接傳遞的資訊。
+2. **`writerResultFilePath`**（必要）→ 取得 `testFilePaths`、`testClasses`、`testMethodCount`、`testCaseCount`、`infrastructureFiles`、`skillsLoaded`、`deviations`
+3. **`executorResultFilePath`**（必要）→ 取得 `testResult`、`totalTests`、`passedTests`、`failedTests`、`fixHistory`、`productionObservations`
 
 ### Step 0.5：判斷審查模式
 
@@ -60,7 +56,7 @@ permissionMode: bypassPermissions
 
 1. **驗證前次 issues 是否正確套用**：逐一檢查 `previousIssues` 中的每個 issue，確認修改後的程式碼已解決該問題
 2. **驗證新增測試案例是否正確**：如果 Writer 修改模式新增了測試（`previousIssues.missingTestCases`），確認新增的測試命名正確、邏輯合理
-3. **給出修改後評分**：基於前次評分和修正結果，產出新的 `overallScore`
+3. **給出修改後評分**：基於前次評分和修正結果，產出新的 `overallScore`（量尺同「評級標準」的 ⭐1～5）
 4. **不額外展開全新審查**：不主動發掘前次報告未提及的問題。只報告「前次 issues 是否解決」+ 「新增測試品質」
 
 > **⚠️ 目的**：避免「每次修改後 Reviewer 又發現新問題 → Writer 再修改 → Reviewer 再發現」的無限迴圈。Re-review 模式的目標是確認修改品質，而非展開新的完整審查。
@@ -68,11 +64,11 @@ permissionMode: bypassPermissions
 **Re-review 模式的回傳格式調整**：
 ```json
 {
-  "overallScore": "A",
+  "overallScore": "⭐⭐⭐⭐⭐ (5/5)",
   "mode": "re-review",
   "previousIssuesResolution": [
     { "originalIssue": "W1: 命名模糊", "status": "resolved", "note": "已改為具體描述" },
-    { "originalIssue": "W2: 斷言風格不一致", "status": "resolved", "note": "已統一使用 .WithParameterName()" }
+    { "originalIssue": "W2: 斷言風格不一致", "status": "resolved", "note": "已統一使用專用狀態碼方法" }
   ],
   "newTestsQuality": "good",
   "summary": "所有前次建議已正確套用，新增的 2 個測試案例命名與邏輯合理。",
@@ -153,10 +149,7 @@ Executor 已確認全數通過時**跳過重新執行**；否則自行以 `dotne
 |---------|------|
 | 使用 AwesomeAssertions | 不可使用 `Assert.Equal()`、`Assert.True()` 等 xUnit 原生斷言 |
 | HTTP 狀態碼斷言 | 必須使用 AwesomeAssertions.Web 專用擴充方法：`.Be200Ok()`、`.Be201Created()`、`.Be204NoContent()`、`.Be400BadRequest()`、`.Be404NotFound()`、`.Be409Conflict()` 等。不得使用不存在的 `.HaveStatusCode(HttpStatusCode.X)` |
-| ProblemDetails 完整驗證 | 驗證 `Status`、`Title`，並視情況驗證 `Detail`、`Errors` |
-| ValidationProblemDetails | 驗證 `Errors` 字典中的欄位名與錯誤訊息 |
-| 複合欄位驗證錯誤 | 多欄位同時驗證失敗的測試必須驗證每個欄位的 **key 存在性 + 錯誤訊息內容**，不得僅檢查 key 存在 |
-| 邊界 Happy Path 回應體 | 邊界值 Happy Path 測試（如 201 Created）必須使用 `.And.Satisfy<T>()` 驗證回應體資料，不得僅驗證 status code |
+| 4xx 與邊界回應體 | 依 Writer 建議層 4、5：4xx 驗 `ProblemDetails`／`ValidationProblemDetails`，邊界值 Happy Path 驗回應體資料；偏離且有記錄時依 4h 審查 |
 | 集合斷言 | 使用 `.Should().HaveCount(n)` 或 `.Should().ContainSingle()` 等 |
 | Null 安全斷言 | 使用 `.Should().NotBeNull()` 後再存取屬性（使用 `!` 運算子） |
 
@@ -165,8 +158,8 @@ Executor 已確認全數通過時**跳過重新執行**；否則自行以 `dotne
 | 檢查項目 | 規則 |
 |---------|------|
 | AAA 模式 | 每個測試方法必須清晰區分 Arrange / Act / Assert |
-| Collection Fixture | 使用容器時必須有 `[Collection("Integration")]` |
-| WebApplicationFactory | 必須透過 `CustomWebApplicationFactory<Program>` 建立測試 Host |
+| Collection Fixture | 使用容器時測試類別標 Collection Fixture 的 `[Collection]` |
+| WebApplicationFactory | 必須透過 `WebApplicationFactory<Program>` 衍生類別建立測試 Host |
 | HttpClient 取得方式 | 必須使用 `factory.CreateClient()`，不可 `new HttpClient()` |
 | 測試隔離 | 每個測試獨立，不依賴其他測試的執行順序 |
 | async/await | 整合測試必須使用 `async Task` 回傳型別 |
@@ -180,7 +173,6 @@ Executor 已確認全數通過時**跳過重新執行**；否則自行以 `dotne
 | 硬式編碼 | 避免不必要的 magic number / magic string |
 | 重複程式碼 | 相同設定邏輯應抽取到 TestBase 或 helper method |
 | Dispose 模式 | 確認 `HttpClient`、Factory 的生命週期正確管理 |
-| Factory 封裝性 | **所有** Factory 類型（包含 InMemory 和容器化）均不得暴露 `public EnsureCreatedAsync()` / `EnsureDatabaseCreated()` 方法。InMemory Factory 的資料庫初始化應由 IntegrationTestBase 的 `CleanupDatabaseAsync()` 內部處理（`EnsureDeletedAsync()` + `EnsureCreatedAsync()`）；容器 Factory 的 `EnsureCreatedAsync()` 必須在 `InitializeAsync()` 內部呼叫 |
 
 ### 4e. 容器管理審查（條件性）
 
@@ -190,10 +182,7 @@ Executor 已確認全數通過時**跳過重新執行**；否則自行以 `dotne
 |---------|------|
 | 容器共享 | 使用 Collection Fixture 共享容器，避免每個測試類別啟動新容器 |
 | IAsyncLifetime | Factory 或 Fixture 必須實作 `IAsyncLifetime` 管理容器生命週期 |
-| ConfigureServices 模式 | **必須**使用 `ConfigureWebHost` + `builder.ConfigureServices()` 置換 DbContext，**不得**使用 `ConfigureTestServices`。DbContext 置換有兩種合法模式：(A) Descriptor 移除：使用 `SingleOrDefault(d => d.ServiceType == typeof(DbContextOptions<T>))` 精確移除後重新註冊；(B) 環境條件判斷：Program.cs 以 `if(!builder.Environment.IsEnvironment("Testing"))` 包裹原始 DB 註冊，WebApiFactory 使用 `UseEnvironment("Testing")` + 直接 `AddDbContext<T>()`（無需 descriptor 移除）。兩種模式均合規 |
-| Container 初始化 | Container 必須使用 `readonly` 欄位直接初始化（非 nullable），`EnsureCreatedAsync()` 必須在 Factory 的 `InitializeAsync()` 內部呼叫，**不得**暴露為公開方法 |
-| 資料庫清理 | 根據載入的 SKILL.md 選擇清理策略：`webapi-integration-testing` / `aspire-testing` SKILL → DatabaseManager + Respawn；`testcontainers-database` SKILL → `ExecuteSqlRaw("DELETE FROM ...")` 手動清理。多表時須按 FK 順序清理 |
-| WaitStrategy | 容器必須有適當的健康檢查等待策略，**不得**使用 `Task.Delay()` 硬式等待 |
+| 資料庫清理 | 根據載入的 SKILL.md 選擇清理策略：`webapi-integration-testing` SKILL → DatabaseManager + Respawn；`testcontainers-database` SKILL → `ExecuteSqlRaw("DELETE FROM ...")` 手動清理。多表時須按 FK 順序清理 |
 | 容器映像標籤 | 應使用固定版本標籤（如 `2022-latest`），避免 `latest` 造成不穩定 |
 | 目錄結構 | 測試專案必須有 `Fixtures/`、`TestBase/`、`Controllers/`（或 `Endpoints/`）子目錄結構 |
 | IntegrationTestBase | 必須有抽象基底類別提供 Factory/Client/Seed/Cleanup 共用邏輯 |
@@ -204,7 +193,6 @@ Executor 已確認全數通過時**跳過重新執行**；否則自行以 `dotne
 | 檢查項目 | 規則 |
 |---------|------|
 | 端點覆蓋 | 每個 API 端點至少有一個 Happy Path 測試 |
-| 建構子防禦測試 | 若建構子有 null guard（`?? throw new ArgumentNullException`），是否每個有 null guard 的參數都有對應的防禦測試 |
 | 錯誤路徑覆蓋 | 每個可能回傳 4xx/5xx 的情境都有對應測試 |
 | Validation 覆蓋 | 每個 FluentValidation 規則至少有一個測試 |
 | 對稱驗證覆蓋 | 當多個端點共用相同 Validator 規則時，所有端點的驗證測試覆蓋率必須對等（例如 Create 有 7 條驗證測試，Update 也必須有 7 條） |
@@ -216,11 +204,6 @@ Executor 已確認全數通過時**跳過重新執行**；否則自行以 `dotne
 
 > ℹ️ 當測試由多個 Writer 分割產出時，檢查以下跨檔案一致性項目。若只有單一 Writer，可略過此步驟。
 
-- [ ] `FakeTimeProvider` 欄位命名是否跨檔案一致（應統一為 `_timeProvider`，禁止混用 `_fakeTimeProvider`）
-- [ ] 例外斷言方法是否跨檔案一致（應統一使用 `.Throw<T>()`，禁止混用 `.ThrowExactly<T>()`）
-- [ ] lambda 委派宣告是否跨檔案一致（應統一使用 `var act = () => X()`，禁止混用 `Action act = () =>`，**亦禁止 `var act = async () => await X()` 的 async 包裝**）
-- [ ] **例外斷言參數名**是否跨檔案一致（production 以 `nameof(x)` 拋出時應一律接 `.WithParameterName("x")`，不得一檔驗、另一檔不驗）
-- [ ] 物件比較斷言是否跨檔案一致（**應統一使用 `BeEquivalentTo()`** —— 此為範本與 orchestrator 風格指令的規定方向；逐一屬性斷言僅在驗證單一特定欄位時使用。**不得建議改成與指令相反的方向**）
 - [ ] `using` 排列順序和組織方式是否跨檔案一致
 - [ ] **檔內 `using` 是否重複宣告 `GlobalUsings.cs` 已涵蓋的命名空間**
 - [ ] **私有 helper 是否同名不同義**（兩檔各自定義同名 `CreateValid{Type}()` 但簽章或預設值不同；分割組應加負責範圍後綴以避免碰撞）

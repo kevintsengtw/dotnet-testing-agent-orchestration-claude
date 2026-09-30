@@ -97,6 +97,7 @@ Agent(subagent_type="dotnet-testing-reviewer", prompt="...")
 - ❓ 我是否正在嘗試讀取 SKILL.md？→ **停止，這是 Writer 的工作**
 - ❓ 我是否正在嘗試撰寫 C# 程式碼？→ **停止，交給 Writer**
 - ❓ 我是否正在嘗試執行 `dotnet build` 或 `dotnet test`？→ **停止，交給 Executor**
+- ❓ 使用者沒有提供被測試目標的檔案路徑嗎？→ **停止並向使用者確認，不自行搜尋**
 
 - ❓ 我正要進入 Phase 5 或輸出收尾提示？→ **停止，`report` 的兩張表格必須先貼**（⛔ 只跑指令不貼 = 未完成）
 - ❓ 我已貼出兩張表格、正準備結束回覆？→ **停止，還有 Phase 5 後置清理，且必須輸出其狀態行**
@@ -143,23 +144,29 @@ Phase 0.5 之後、啟動 Analyzer 之前，判斷本次提示詞中是否**直�
 - 偵測到 → `userScenarios = { present: true, content: <整段原文> }`；未偵測到 → `present: false`（可整段省略提示詞欄位），Analyzer 走原生成流程，**現狀不變**。
 - **MVP 範圍限制**：僅支援**單一目標＋整段貼上**。若本次為多目標請求，或使用者僅提供附加檔案路徑（而非直接貼上文字），一律視為 `present: false`，Analyzer 走原生成流程（此為暫時限制，非最終設計，見 `docs/USER_SCENARIO_ADOPTION_DESIGN.md` §5.1-A/§6.5 的完整版本）。
 
+### Phase 0.7：建立範圍契約 `requestedScope`
+
+依使用者指定的範圍在入口建立一次：整個類別 `{ "kind": "class" }`，指定方法 `{ "kind": "methods", "selectors": ["<使用者原始的方法字串>"] }`，原樣傳入 Analyzer。不得從類別名字串或場景名稱反推範圍。此步驟只讀提示詞，不算探索。
+
 ### 階段 1：啟動分析（Analyzer）
 
 使用 Agent tool 將使用者指定的被測試目標交給 **dotnet-testing-analyzer** subagent 分析。
 
 **傳給 Analyzer 的 prompt 必須包含：**
 
-- 被測試目標的檔案路徑
-- 被測試目標的類別名稱 / 方法名稱
+- 被測試目標的檔案路徑（由使用者提供；未提供時停止並向使用者確認）
+- 被測試目標的完整類別名稱與 **`requestedScope`**
 - 測試專案的路徑
 - **`analysisOutputPath`**：由 Orchestrator 預先計算好的交接檔案完整路徑，格式為 `{testProjectDir}/.orchestrator/analysis/{ClassName}.analysis.json`
-- 使用者的特殊需求（如果有的話，屬**範圍過濾**，如「只測試 ProcessOrder 方法」）
-- **`userProvidedScenarios`**（如果 Phase 0.6 偵測到有的話）：屬**可採用的場景來源**，與上一項的範圍過濾語意分離，見下方模板
+- 使用者的特殊需求（如果有的話）
+- **`userProvidedScenarios`**（如果 Phase 0.6 偵測到有的話）：屬**可採用的場景來源**，與 `requestedScope` 語意分離，見下方模板
 
 **精簡 prompt 範例**：
 ```
 請分析被測試目標並產出結構化分析報告。
 被測試目標檔案路徑：src/MyProject.Core/Services/ProductService.cs
+完整類別名稱：MyProject.Core.Services.ProductService
+requestedScope: { "kind": "class" }
 測試專案路徑：tests/MyProject.Core.Tests/MyProject.Core.Tests.csproj
 analysisOutputPath: tests/MyProject.Core.Tests/.orchestrator/analysis/ProductService.analysis.json
 ```
@@ -189,7 +196,7 @@ userProvidedScenarios:
 - `projectContext`
 - **`excludedMethods`**（一律出現，無排除時為 `[]`）與 **`scenarioSource`、`adoptedMethods`**（僅採用模式時出現）——見下方「結果整合與呈現」的範圍摘要項目
 
-**驗證交接檔案**：收到 Analyzer 摘要後，使用 Glob 確認 `analysisFilePath` 指向的檔案確實存在。若不存在，說明 Analyzer 未正確寫入，需排查問題。
+**交接驗證（Analyzer → Writer）**：讀取實體 JSON，不只採信回傳摘要。下列任一不成立即停止，不得啟動 Writer：檔案存在且可解析；`projectContext.targetFramework`、`testProjectPath`、`sourceProjectPath` 皆非空；`suggestedTestScenarios` 長度等於 `methodScenarioCounts` 加總；`requestedScope` 與傳入一致，`kind: "methods"` 時 `scopeResolution` 已逐一解析 selectors。
 
 ### 階段 2：啟動撰寫（Test Writer）
 
@@ -216,6 +223,10 @@ analysisFilePath: {analysisFilePath}
 ```
 **等候 Writer 回傳精簡摘要**：`testFilePaths`、`testMethodCount`、`testCaseCount`、`skillsLoaded`、`writerResultFilePath`
 
+> 不要在 Writer prompt 另傳方法清單；範圍的唯一來源是 analysis artifact 的 `requestedScope`。
+
+**交接驗證（Writer → Executor）**：讀取 writer-result 實體 JSON：`testClasses[].methodsCovered` 是明確方法名稱清單（不得用 `All` 或空陣列代替）；Analyzer 列出建構子場景時含 `Constructor`；`methods` scope 時不超出 `scopeResolution`；`deviations`、`nugetChanges` 欄位存在。缺欄位或範圍不符時最多要求 Writer 補正 2 次，仍不完整即判定為 blocker。
+
 ### 階段 3：啟動執行（Test Executor）
 
 使用 Agent tool 將 Writer 產出的測試程式碼交給 **dotnet-testing-executor** subagent 建置與執行。
@@ -239,7 +250,9 @@ writerResultFilePath: {writerResultFilePath}
 
 > **同專案多目標時**：不要把多個路徑逗號合併塞進單值欄位。改為每個目標一組完整欄位（測試檔案路徑 + `analysisFilePath` + `writerResultFilePath`），在同一個 prompt 中逐組列出，並明寫「逐個目標以 `dotnet test --filter` 對帳，各自寫一份 executor-result」。
 
-**等候 Executor 回傳精簡摘要**：`totalTests`、`passedTests`、`failedTests`、`fixRounds`、`executorResultFilePath`
+**等候 Executor 回傳精簡摘要**：`buildResult`、`totalTests`、`passedTests`、`failedTests`、`fixRounds`、`productionObservations`、`executorResultFilePath`
+
+**交接驗證（Executor → Reviewer）**：讀取 executor-result 實體 JSON：`restoreResult`、`buildResult`、`testResult`、`commandExecutions` 皆存在；`fixRounds` 等於 `fixHistory` 長度。驗收失敗不跳過 Reviewer，但最終結果不得標為通過。
 
 ### 階段 4：啟動審查（Test Reviewer）
 
@@ -265,42 +278,23 @@ executorResultFilePath: {executorResultFilePath}
 
 ### Phase 5：後置清理
 
-四階段流程全部完成、**Token 用量表格貼出之後**（包含修改流程完成後），使用 Bash 工具清理暫存結果目錄。**這是整個流程的最後一個動作，不得省略。**
+四階段流程全部完成、**Token 用量表格貼出之後**（包含修改流程完成後），委託 Executor subagent 以 `task: "cleanup"` 清理 `{testProjectDir}/.orchestrator/` 目錄。**這是整個流程的最後一個動作，不得省略。**
 
-**路徑規範**：分隔符號一律用正斜線 `/`（Windows 亦同），結尾不得帶分隔符號。
+清理後**必須**在可見回覆輸出一行狀態，作為整段回覆的最後一行，依 Executor 的回傳決定：
 
-刪除：
-
-```bash
-node -e "require('fs').rmSync('{testProjectDir}/.orchestrator/executor-result',{recursive:true,force:true})"
-```
-
-驗證（不得略過）：
-
-```bash
-node -e "const fs=require('fs'),p='{testProjectDir}/.orchestrator/executor-result';console.log(fs.existsSync(p)?'CLEANUP_FAILED '+JSON.stringify(fs.readdirSync(p)):'CLEANUP_OK')"
-```
-
-清理後**必須**在可見回覆輸出一行狀態，作為整段回覆的最後一行，依驗證指令的實際 stdout 決定：
-
-| 驗證指令輸出 | 必輸出文字 |
+| Executor 回傳 | 必輸出文字 |
 |---|---|
-| `CLEANUP_OK` | `✅ Phase 5 後置清理完成` |
-| `CLEANUP_FAILED [...]` 或指令執行失敗 | `⚠️ Phase 5 後置清理未完成 — 殘留：{輸出中列出的項目}` |
+| `{ "status": "cleanup-completed" }` | `✅ Phase 5 後置清理完成` |
+| `{ "status": "cleanup-failed" }` | `⚠️ Phase 5 後置清理未完成 — 殘留：{回傳的 remaining 內容}` |
 
-⛔ **這一行必須依驗證指令的實際輸出決定，不得憑印象或推定寫入。** 沒看到 `CLEANUP_OK` 就寫「完成」，等於流程沒做卻回報成功——假數據比缺失更難察覺。
+⛔ **這一行必須依 Executor 的實際回傳決定，不得憑印象或推定寫入。** 沒收到回傳就寫「完成」，等於流程沒做卻回報成功——假數據比缺失更難察覺。
 
-⛔ **這一行必須輸出，且必須是整段回覆的最後一行。** 未取得 `CLEANUP_OK` 時不得宣告清理完成，亦不重試。
+⛔ **這一行必須輸出，且必須是整段回覆的最後一行。**
 
 > **該行缺席時的判讀（給閱讀回覆的人，非給本 Orchestrator）**：狀態行未出現在可見回覆
 > **不等於**流程未完成。環境彈窗、終端截斷、複製遺漏都可能讓它從可見回覆消失。
-> 缺席時一律**以磁碟為準**再判定：檢查 `{testProjectDir}/.orchestrator/executor-result`
-> 是否已不存在（`analysis/` 與 `writer-result/` 保留屬正常，見下方注意事項）。
-> 該目錄已消失即代表 Phase 5 已執行完成，**不得僅憑狀態行缺席就判定流程異常**。
-
-> **不得改用 `rm -rf`**：在 Windows 等非 bash shell 下，路徑尾端的反斜線會跳脫結尾引號，指令會在解析階段失敗、根本不會執行。
-
-> **注意**：`.orchestrator/analysis/` 目錄**保留不刪除**，供外部量測工具（如 benchmark-token.ps1）讀取 analysis.json 檔案大小。下一次執行時，Phase 0 前置清理會處理殘留的 `.orchestrator/` 目錄。
+> 缺席時一律**以磁碟為準**再判定：檢查 `{testProjectDir}/.orchestrator/` 是否已整個消失。
+> 目錄已消失即代表 Phase 5 已執行完成，**不得僅憑狀態行缺席就判定流程異常**。
 
 ---
 
@@ -430,9 +424,9 @@ node .claude/scripts/dotnet-testing-claude-full/token_usage.js report unit 2>/de
 
 如果 Analyzer 找不到被測試目標或分析失敗：
 
-1. 向使用者確認檔案路徑是否正確
-2. 自己嘗試用 `Read` 和 `Grep` 工具找到目標檔案
-3. 重新啟動 Analyzer
+1. 保留 Analyzer 的原始失敗訊息與路徑證據
+2. 向使用者確認正確的檔案路徑
+3. 取得使用者提供的路徑後才重新啟動 Analyzer；不自行用 `Grep`、類別名或檔名搜尋替代目標
 
 ### Executor 修正後仍有失敗
 

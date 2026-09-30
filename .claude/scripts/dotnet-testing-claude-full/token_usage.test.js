@@ -215,7 +215,7 @@ section("Phase 3: render / ledger / writeReportFiles");
   chk("report 框定方式=marker", md.indexOf("| 框定方式 | marker |") !== -1);
 
   const entry = T.ledgerEntry(meta, res);
-  chk("ledgerEntry schema_version=2", entry.schema_version === 2);
+  chk("ledgerEntry schema_version 與常數一致", entry.schema_version === T.SCHEMA_VERSION);
   chk("ledgerEntry totals.input_with_cache=5857", entry.totals.input_with_cache === 5857);
   chk("ledgerEntry framing/cost", entry.framing === "marker" && entry.cost === null);
   chk("ledgerEntry scopes 含 writer count=2", entry.scopes.writer && entry.scopes.writer.count === 2);
@@ -459,6 +459,95 @@ section("Phase 8.1: 循序判定 / 耗時表封閉");
   const totalCell = cells.filter((c) => c[1] === "**總計**")[0];
   chk("耗時表封閉：總計顯示值 = 四階段顯示值相加", totalCell && toSec(totalCell[2].replace(/\*/g, "")) === phaseSum);
 
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
+// Phase 9：usage 去重（message.id + requestId，與 ccusage 同口徑）
+// ---------------------------------------------------------------------------
+
+section("Phase 9: usage 去重");
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tu_dedup_"));
+  const sid = "33333333-3333-3333-3333-333333333333";
+  const main = path.join(tmp, sid + ".jsonl");
+  const sdir = path.join(tmp, sid, "subagents");
+  fs.mkdirSync(sdir, { recursive: true });
+  const U = { input_tokens: 100, cache_creation_input_tokens: 200, cache_read_input_tokens: 300, output_tokens: 40 };
+  const row = (id, rid, sc, u) =>
+    JSON.stringify({
+      type: "assistant",
+      isSidechain: !!sc,
+      requestId: rid,
+      timestamp: "2026-06-04T10:10:00.000Z",
+      message: { id: id, role: "assistant", model: "claude-opus-5", usage: u || U },
+    });
+  const partial = (o) => Object.assign({}, U, { output_tokens: o });
+  // 實測形態：同一 message.id 依 content block 拆多行（thinking / tool_use / …），input 欄位相同、
+  // 串流中途行的 output_tokens 是佔位值（2～4），最後一行才是完整值
+  fs.writeFileSync(main, [row("A", "r1", false, partial(2)), row("A", "r1", false, partial(2)), row("A", "r1"), row("B", "r2"), row(undefined, undefined), row(undefined, undefined), row("C", "r3"), row("C", "r4")].join("\n") + "\n");
+  fs.writeFileSync(path.join(sdir, "agent-d.meta.json"), JSON.stringify({ agentType: "dotnet-testing-reviewer", description: "review" }));
+  fs.writeFileSync(path.join(sdir, "agent-d.jsonl"), [row("S", "s1", true), row("S", "s1", true), row("S", "s1", true)].join("\n") + "\n");
+
+  chk("usageKey：有 id → id|requestId", T.usageKey({ requestId: "r1", message: { id: "A" } }) === "A|r1");
+  chk("usageKey：無 id → null（逐行計，合成 fixture 向後相容）", T.usageKey({ message: { usage: {} } }) === null);
+  chk("iterUniqueUsageLines：8 行 → 6 筆（A×3 併 1、無 id×2 各計、C 兩個 requestId 分開）", T.iterUniqueUsageLines(main).length === 6);
+
+  const res = T.aggregate(main, T.parseTs("2026-06-04T10:00:00.000Z"), T.parseTs("2026-06-04T10:30:00.000Z"));
+  chk("主 transcript 去重後 pure_input = 6 × 100", res.scopes.orchestrator.pure_input === 600);
+  chk("主 transcript 去重後 output = 6 × 40（A 取最後一行的 40，非佔位值 2）", res.scopes.orchestrator.output === 240);
+  chk("主 transcript rows 為去重後筆數", res.scopes.orchestrator.rows === 6);
+  chk("subagent 同 id 三行只計一次", res.scopes.reviewer.pure_input === 100 && res.scopes.reviewer.output === 40);
+  chk("by-model 亦去重（opus-5 = 主 6 + sub 1 = 700）", res.models["claude-opus-5"].pure_input === 700);
+  chk("SCHEMA_VERSION 升為 3（去重口徑）", T.SCHEMA_VERSION === 3);
+
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
+// Phase 10：窗口全長、cache 5m/1h 分項、marker 清理
+// ---------------------------------------------------------------------------
+
+section("Phase 10: 窗口全長 / cache 5m·1h / marker 清理");
+{
+  const { main, tmp } = buildFixture();
+  const res = T.aggregate(main, T.parseTs("2026-06-04T10:00:00.000Z"), T.parseTs("2026-06-04T10:30:00.000Z"));
+  chk("durations.windowSeconds = 窗口秒數（30 分 = 1800）", res.durations.windowSeconds === 1800);
+  const table = T.renderDurationTable(res);
+  chk("耗時表含「窗口全長」列且為粗體（不被封閉性檢查計入）", table.indexOf("| **窗口全長** | **30:00** |") !== -1);
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+{
+  const b = new T.Bucket();
+  b.addUsage({ input_tokens: 1, cache_creation_input_tokens: 300, cache_read_input_tokens: 0, output_tokens: 1,
+    cache_creation: { ephemeral_5m_input_tokens: 100, ephemeral_1h_input_tokens: 200 } });
+  b.addUsage({ input_tokens: 1, cache_creation_input_tokens: 50, output_tokens: 1 }); // 舊格式無巢狀欄
+  chk("cache_write 總量不受分項影響（300 + 50）", b.cache_write === 350);
+  chk("cache_write_5m / 1h 分項累加，缺欄以 0 計", b.cache_write_5m === 100 && b.cache_write_1h === 200);
+  const models = { m: b };
+  const [, totA] = T.costFor(models, { m: { cache_write_per_mtok: 10 } });
+  const [, totB] = T.costFor(models, { m: { cache_write_per_mtok: 10, cache_write_5m_per_mtok: 10, cache_write_1h_per_mtok: 20 } });
+  // A：350 × 10 = 0.0035；B：100×10 + 200×20 + 50(未分項)×10 = 0.0055
+  chk("未設分項單價：沿用 cache_write_per_mtok", Math.abs(totA - 0.0035) < 1e-9);
+  chk("設分項單價：5m/1h 分別計價、未分項餘量用通用單價", Math.abs(totB - 0.0055) < 1e-9);
+  const md = T.renderReportMd({ run_id: "r", session_id: "s", framework: "unit", framing: "marker", start_ts: "2026-06-04T10:00:00.000Z", end_ts: "2026-06-04T10:30:00.000Z" },
+    { scopes: {}, models: models, subagents: [], total: b, durations: { phases: [], cleanups: [], totalSeconds: 0, windowSeconds: 0 } });
+  chk("完整報告 by-model 含 5m / 1h 欄", md.indexOf("| 　5m | 　1h |") !== -1 && md.indexOf("| m | 2 | 350 | 100 | 200 |") !== -1);
+}
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tu_prune_"));
+  T.setProjectDirOverride(tmp);
+  const sdir = path.join(tmp, ".token-usage-state");
+  fs.mkdirSync(sdir, { recursive: true });
+  const old = path.join(sdir, "old.json");
+  const fresh = path.join(sdir, "fresh.json");
+  fs.writeFileSync(old, "{}");
+  fs.writeFileSync(fresh, "{}");
+  const t = new Date(Date.now() - 40 * 86400 * 1000);
+  fs.utimesSync(old, t, t);
+  const n = T.pruneMarkers(30);
+  chk("pruneMarkers：刪 40 天前的、留新的", n === 1 && !fs.existsSync(old) && fs.existsSync(fresh));
+  T.setProjectDirOverride(null);
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 

@@ -29,10 +29,10 @@ permissionMode: bypassPermissions
 1. **測試專案路徑**（必要）— 如 `tests/MyProject.Core.Tests/MyProject.Core.Tests.csproj`
 2. **Writer 產出的測試檔案路徑**（必要）— 如 `tests/MyProject.Core.Tests/Services/ProductServiceTests.cs`
 3. **Writer 新增的 NuGet 套件資訊**（可選）— 如果 Writer 有新增套件，告知以便排查相容性問題
-4. **`analysisFilePath`**（可選）— Analyzer 交接檔案路徑，用於取得 `className` 和完整分析上下文
-5. **`writerResultFilePath`**（可選）— Writer 交接檔案路徑，用於取得 `testFilePaths` 和 `testClasses`
+4. **`analysisFilePath`**（必要）— Analyzer 交接檔案路徑，用於取得 `className` 和完整分析上下文
+5. **`writerResultFilePath`**（必要）— Writer 交接檔案路徑，用於取得 `testFilePaths` 和 `testClasses`
 
-> **向下相容**：如果呼叫者未提供交接檔案路徑（`analysisFilePath`、`writerResultFilePath`），則使用 prompt 中直接傳遞的資訊。此機制確保手動呼叫時仍可正常運作。
+> 交接檔案路徑由 Orchestrator 提供。正式流程中未提供即為交接斷裂，停止並回報，不得改用 prompt 內嵌資訊補位。
 
 ---
 
@@ -72,17 +72,18 @@ permissionMode: bypassPermissions
 
 **className 取得方式**（依優先順序）：
 1. 從 analysis JSON 的 `className` 欄位
-2. 從測試檔案名稱推導：`OrderProcessingServiceTests.cs` → `OrderProcessingService`
+2. 從測試檔案名稱推導：`ProductServiceTests.cs` → `ProductService`
 
-> **向下相容**：僅當呼叫者未提供任何交接檔案路徑時，才使用 prompt 中直接傳遞的資訊。
+### Step 2：還原並建置測試專案
 
-### Step 2：建置測試專案
-
-依照 `dotnet-test` Skill 的 build-first 工作流，使用 `Bash` 工具執行：
+先還原，讓套件還原問題與編譯錯誤分流；還原失敗即停止並回報 restore blocker，不進修正迴圈（`restoreResult: "failed"`、`buildResult: "skipped"`，照常寫入 executor-result）：
 
 ```bash
-dotnet build <測試專案路徑> -p:WarningLevel=0 /clp:ErrorsOnly --verbosity minimal
+dotnet restore <測試專案路徑> --ignore-failed-sources --verbosity minimal
+dotnet build <測試專案路徑> --verbosity minimal
 ```
+
+建置不抑制警告，警告代碼記入 `buildWarnings`。每次實際執行的 restore／build／test 逐筆記入 `commandExecutions`（命令原文與 exit code，依執行順序，不覆寫、不事後重建）。
 
 **如果建置成功**，繼續 Step 3。
 
@@ -153,7 +154,9 @@ dotnet test <測試專案路徑> --no-build --verbosity minimal
   "executedAt": "2026-03-14T09:41:07+08:00",
   "testProjectPath": "tests/MyProject.Core.Tests/MyProject.Core.Tests.csproj",
   "testFilePaths": ["tests/MyProject.Core.Tests/Services/ProductServiceTests.cs"],
+  "restoreResult": "success",
   "buildResult": "success",
+  "buildWarnings": [],
   "testResult": "passed",
   "totalTests": 15,
   "passedTests": 15,
@@ -168,6 +171,11 @@ dotnet test <測試專案路徑> --no-build --verbosity minimal
       "result": "build succeeded"
     }
   ],
+  "commandExecutions": [
+    { "attempt": 1, "command": "dotnet restore tests/MyProject.Core.Tests/MyProject.Core.Tests.csproj --ignore-failed-sources --verbosity minimal", "exitCode": 0 },
+    { "attempt": 1, "command": "dotnet build tests/MyProject.Core.Tests/MyProject.Core.Tests.csproj --verbosity minimal", "exitCode": 0 },
+    { "attempt": 1, "command": "dotnet test tests/MyProject.Core.Tests/MyProject.Core.Tests.csproj --no-build --verbosity minimal", "exitCode": 0 }
+  ],
   "failedTestDetails": [],
   "productionObservations": []
 }
@@ -181,7 +189,7 @@ dotnet test <測試專案路徑> --no-build --verbosity minimal
 
 寫入交接檔案後，回傳給 Orchestrator 的精簡摘要：
 
-1. **`status`**：`"completed"` 或 `"partial"`
+1. **`status`**：`"completed"` 或 `"partial"`；`buildResult` 一併回傳，Reviewer 以它決定能否給評分
 2. **`totalTests`**：測試總數——該 writer-result 所列測試檔的案例數；同專案多目標時各記自身
 3. **`passedTests`**：通過數
 4. **`failedTests`**：失敗數
@@ -278,7 +286,7 @@ node -e "const fs=require('fs'),p='{testProjectDir}/.orchestrator';console.log(f
 ## 重要原則
 
 1. **dotnet-test Skill 優先** — 所有建置與執行操作都依照 `dotnet-test` Skill 的指引
-2. **Build-first** — 永遠先 `dotnet build` 確認編譯通過，再 `dotnet test --no-build`
+2. **Restore → Build → Test** — 先還原、再建置、建置成功才 `dotnet test --no-build`；建置不抑制警告
 3. **最多 3 輪** — 修正迴圈不超過 3 輪，超過就回報需要 Writer 介入
 4. **不改動被測試目標** — 只修改測試相關檔案，**任何情況都不修改 `src/` 下的生產程式碼**；發現生產程式碼問題時記入 `productionObservations[]` 回報，由使用者決定
 5. **完整回報** — 即使有失敗，也要回傳詳細的錯誤訊息和分析，方便後續處理
